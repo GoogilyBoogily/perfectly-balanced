@@ -111,17 +111,13 @@ impl Database {
         let tx = conn.unchecked_transaction()?;
 
         // Collect in_progress move IDs before resetting them
-        let mut stmt =
-            tx.prepare("SELECT id FROM planned_moves WHERE status = 'in_progress'")?;
-        let recovered_move_ids: Vec<i64> = stmt
-            .query_map([], |row| row.get(0))?
-            .collect::<Result<Vec<_>, _>>()?;
+        let mut stmt = tx.prepare("SELECT id FROM planned_moves WHERE status = 'in_progress'")?;
+        let recovered_move_ids: Vec<i64> =
+            stmt.query_map([], |row| row.get(0))?.collect::<Result<Vec<_>, _>>()?;
         drop(stmt);
 
-        let plans_failed = tx.execute(
-            "UPDATE balance_plans SET status = 'failed' WHERE status = 'executing'",
-            [],
-        )?;
+        let plans_failed = tx
+            .execute("UPDATE balance_plans SET status = 'failed' WHERE status = 'executing'", [])?;
 
         let moves_reset = tx.execute(
             "UPDATE planned_moves SET status = 'pending', error_message = NULL \

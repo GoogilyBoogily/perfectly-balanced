@@ -104,7 +104,11 @@ fn process_dir_entry(
 
     let parent_path = Path::new(&relative_path).parent().map(|p| {
         let s = p.to_string_lossy().to_string();
-        if s.is_empty() { ".".to_string() } else { s }
+        if s.is_empty() {
+            ".".to_string()
+        } else {
+            s
+        }
     });
 
     let mtime = metadata

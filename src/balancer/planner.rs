@@ -15,10 +15,7 @@ struct PlanContext {
 
 /// Compute the maximum deviation from target utilization across all disks.
 fn max_imbalance(disk_states: &[DiskState], target: f64) -> f64 {
-    disk_states
-        .iter()
-        .map(|ds| (ds.sim_utilization() - target).abs())
-        .fold(0.0_f64, f64::max)
+    disk_states.iter().map(|ds| (ds.sim_utilization() - target).abs()).fold(0.0_f64, f64::max)
 }
 
 /// Check if all disks are within tolerance of the target utilization.
@@ -200,12 +197,8 @@ fn assign_moves(
             continue;
         }
 
-        let best_target = find_best_target(
-            disk_states,
-            file,
-            ctx.target_utilization,
-            ctx.min_free_headroom,
-        );
+        let best_target =
+            find_best_target(disk_states, file, ctx.target_utilization, ctx.min_free_headroom);
 
         if let Some(tgt_idx) = best_target {
             move_order += 1;

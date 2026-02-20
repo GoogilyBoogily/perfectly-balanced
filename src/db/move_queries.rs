@@ -1,4 +1,4 @@
-use super::models::{MoveStatus, MovePathInfo, PlannedMove, PlannedMoveDetail};
+use super::models::{MovePathInfo, MoveStatus, PlannedMove, PlannedMoveDetail};
 use super::Database;
 use anyhow::Result;
 use rusqlite::params;
@@ -6,8 +6,9 @@ use rusqlite::params;
 /// Map a row from the planned_moves JOIN query into a `PlannedMoveDetail`.
 fn map_move_detail_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<PlannedMoveDetail> {
     let status_str: String = row.get(9)?;
-    let status = MoveStatus::try_from(status_str.as_str())
-        .map_err(|e| rusqlite::Error::FromSqlConversionFailure(9, rusqlite::types::Type::Text, Box::from(e)))?;
+    let status = MoveStatus::try_from(status_str.as_str()).map_err(|e| {
+        rusqlite::Error::FromSqlConversionFailure(9, rusqlite::types::Type::Text, Box::from(e))
+    })?;
     Ok(PlannedMoveDetail {
         move_info: PlannedMove {
             id: row.get(0)?,

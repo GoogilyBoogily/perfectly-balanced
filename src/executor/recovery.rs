@@ -46,10 +46,7 @@ pub(crate) async fn cleanup_partial_files(
             (true, true) => {
                 // Target is a partial file from interrupted rsync — delete it
                 if let Err(e) = tokio::fs::remove_file(&target).await {
-                    warn!(
-                        "Failed to remove partial file {} for move {}: {}",
-                        target, m.id, e
-                    );
+                    warn!("Failed to remove partial file {} for move {}: {}", target, m.id, e);
                 } else {
                     info!("Removed partial file: {}", target);
                     cleaned += 1;
@@ -76,10 +73,7 @@ pub(crate) async fn cleanup_partial_files(
                     MoveStatus::Failed,
                     Some("Data loss: source and target both missing after crash"),
                 )?;
-                warn!(
-                    "Move {} data loss (both source and target missing): {}",
-                    m.id, m.file_path
-                );
+                warn!("Move {} data loss (both source and target missing): {}", m.id, m.file_path);
                 data_loss += 1;
             }
         }

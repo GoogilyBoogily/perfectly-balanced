@@ -30,8 +30,7 @@ pub(crate) async fn start_scan(
 
         let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
             rt.block_on(async {
-                *state_clone.status.write().await =
-                    DaemonStatus::scanning("Discovering disks...");
+                *state_clone.status.write().await = DaemonStatus::scanning("Discovering disks...");
             });
 
             let discovered = match scanner::discover_disks(&state_clone.config.mnt_base) {

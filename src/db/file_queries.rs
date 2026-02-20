@@ -82,17 +82,14 @@ impl Database {
     /// Get all non-directory files on a disk, sorted by size descending.
     pub fn get_all_files_on_disk_by_size(&self, disk_id: i64) -> Result<Vec<FileEntry>> {
         let conn = self.conn();
-        let mut stmt = conn.prepare(
-            &format!(
-                "SELECT {FILE_COLUMNS} FROM files \
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {FILE_COLUMNS} FROM files \
                  WHERE disk_id = ?1 AND is_directory = 0 \
                  ORDER BY size_bytes DESC"
-            ),
-        )?;
+        ))?;
 
-        let files = stmt
-            .query_map(params![disk_id], map_file_row)?
-            .collect::<Result<Vec<_>, _>>()?;
+        let files =
+            stmt.query_map(params![disk_id], map_file_row)?.collect::<Result<Vec<_>, _>>()?;
 
         Ok(files)
     }

@@ -63,8 +63,13 @@ impl Database {
                 params![plan_id],
                 |row| {
                     let status_str: String = row.get(9)?;
-                    let status = PlanStatus::try_from(status_str.as_str())
-                        .map_err(|e| rusqlite::Error::FromSqlConversionFailure(9, rusqlite::types::Type::Text, Box::from(e)))?;
+                    let status = PlanStatus::try_from(status_str.as_str()).map_err(|e| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            9,
+                            rusqlite::types::Type::Text,
+                            Box::from(e),
+                        )
+                    })?;
                     Ok(BalancePlan {
                         id: row.get(0)?,
                         created_at: row.get(1)?,

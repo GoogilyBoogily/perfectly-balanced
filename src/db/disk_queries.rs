@@ -63,13 +63,10 @@ impl Database {
     /// Get all disks.
     pub fn get_all_disks(&self) -> Result<Vec<Disk>> {
         let conn = self.conn();
-        let mut stmt = conn.prepare(
-            &format!("SELECT {DISK_COLUMNS} FROM disks ORDER BY disk_name"),
-        )?;
+        let mut stmt =
+            conn.prepare(&format!("SELECT {DISK_COLUMNS} FROM disks ORDER BY disk_name"))?;
 
-        let disks = stmt
-            .query_map([], map_disk_row)?
-            .collect::<Result<Vec<_>, _>>()?;
+        let disks = stmt.query_map([], map_disk_row)?.collect::<Result<Vec<_>, _>>()?;
 
         Ok(disks)
     }
@@ -77,13 +74,11 @@ impl Database {
     /// Get included disks only.
     pub fn get_included_disks(&self) -> Result<Vec<Disk>> {
         let conn = self.conn();
-        let mut stmt = conn.prepare(
-            &format!("SELECT {DISK_COLUMNS} FROM disks WHERE included = 1 ORDER BY disk_name"),
-        )?;
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {DISK_COLUMNS} FROM disks WHERE included = 1 ORDER BY disk_name"
+        ))?;
 
-        let disks = stmt
-            .query_map([], map_disk_row)?
-            .collect::<Result<Vec<_>, _>>()?;
+        let disks = stmt.query_map([], map_disk_row)?.collect::<Result<Vec<_>, _>>()?;
 
         Ok(disks)
     }

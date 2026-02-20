@@ -145,14 +145,22 @@ async fn process_plan_moves(
             let source_mount = if let Some(p) = disk_map.get(&m.source_disk_id) {
                 p.clone()
             } else {
-                state.db.update_move_status(m.id, MoveStatus::Failed, Some("Unknown source disk"))?;
+                state.db.update_move_status(
+                    m.id,
+                    MoveStatus::Failed,
+                    Some("Unknown source disk"),
+                )?;
                 failed += 1;
                 continue;
             };
             let target_mount = if let Some(p) = disk_map.get(&m.target_disk_id) {
                 p.clone()
             } else {
-                state.db.update_move_status(m.id, MoveStatus::Failed, Some("Unknown target disk"))?;
+                state.db.update_move_status(
+                    m.id,
+                    MoveStatus::Failed,
+                    Some("Unknown target disk"),
+                )?;
                 failed += 1;
                 continue;
             };
@@ -160,14 +168,22 @@ async fn process_plan_moves(
             let source_full = format!("{}/{}", source_mount, m.file_path);
 
             if !std::path::Path::new(&source_full).exists() {
-                state.db.update_move_status(m.id, MoveStatus::Skipped, Some("Source file not found"))?;
+                state.db.update_move_status(
+                    m.id,
+                    MoveStatus::Skipped,
+                    Some("Source file not found"),
+                )?;
                 skipped += 1;
                 continue;
             }
 
             if crate::executor::is_file_open(&source_full).await {
                 tracing::warn!("File is open, skipping: {}", source_full);
-                state.db.update_move_status(m.id, MoveStatus::Skipped, Some("File is currently open"))?;
+                state.db.update_move_status(
+                    m.id,
+                    MoveStatus::Skipped,
+                    Some("File is currently open"),
+                )?;
                 skipped += 1;
                 let _ = state.event_hub.publish(crate::events::Event::MoveComplete {
                     move_id: m.id,
@@ -213,7 +229,11 @@ async fn process_plan_moves(
                     if cancel.is_cancelled() {
                         state.db.update_move_status(m.id, MoveStatus::Pending, None)?;
                     } else {
-                        state.db.update_move_status(m.id, MoveStatus::Failed, Some("rsync failed"))?;
+                        state.db.update_move_status(
+                            m.id,
+                            MoveStatus::Failed,
+                            Some("rsync failed"),
+                        )?;
                         failed += 1;
                     }
                 }
