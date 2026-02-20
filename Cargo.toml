@@ -1,0 +1,95 @@
+[package]
+name = "perfectly-balanced"
+version = "0.1.0"
+edition = "2021"
+authors = ["googboog"]
+description = "Unraid plugin to balance disk usage across array drives using Rust and rsync"
+license = "MIT"
+repository = "https://github.com/googboog/perfectly-balanced"
+readme = "README.md"
+
+[[bin]]
+name = "perfectly-balanced"
+path = "src/main.rs"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# HTTP/API framework
+axum = { version = "0.8", features = ["json"] }
+axum-extra = { version = "0.10", features = ["typed-header"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+
+# Database
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# Filesystem scanning
+jwalk = "0.8"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# System
+libc = "0.2"
+
+# Utilities
+chrono = { version = "0.4", features = ["serde"] }
+regex = "1"
+anyhow = "1"
+thiserror = "2"
+uuid = { version = "1", features = ["v4", "serde"] }
+futures = "0.3"
+tokio-stream = { version = "0.1", features = ["sync"] }
+
+[lints.rust]
+unsafe_code = "deny"
+unreachable_pub = "warn"
+
+[lints.clippy]
+# Lint groups (negative priority so individual overrides win)
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+
+# Cherry-picked restriction lints
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+todo = "warn"
+
+# Noisy pedantic lints to allow
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+cast_possible_truncation = "allow"
+cast_sign_loss = "allow"
+cast_precision_loss = "allow"
+cast_lossless = "allow"
+doc_markdown = "allow"
+similar_names = "allow"
+too_many_lines = "allow"
+needless_pass_by_value = "allow"
+unreadable_literal = "allow"
+struct_excessive_bools = "allow"
+cast_possible_wrap = "allow"
+struct_field_names = "allow"
+trait_duplication_in_bounds = "allow"
+
+# Nursery lints that false-positive
+redundant_pub_crate = "allow"
+option_if_let_else = "allow"
+significant_drop_tightening = "allow"
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1
+opt-level = "s"

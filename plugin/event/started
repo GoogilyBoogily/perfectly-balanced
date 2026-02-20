@@ -1,0 +1,3 @@
+#!/bin/bash
+# Auto-start daemon when Unraid array starts
+/usr/local/emhttp/plugins/perfectly-balanced/rc.perfectly-balanced start

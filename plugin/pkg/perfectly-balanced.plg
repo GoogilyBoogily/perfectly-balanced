@@ -1,0 +1,145 @@
+<?xml version='1.0' standalone='yes'?>
+<!DOCTYPE PLUGIN [
+  <!ENTITY name      "perfectly-balanced">
+  <!ENTITY author    "googboog">
+  <!ENTITY version   "2025.02.19">
+  <!ENTITY launch    "Utilities/&name;">
+  <!ENTITY pluginURL "https://raw.githubusercontent.com/&author;/&name;/master/plugin/pkg/&name;.plg">
+  <!ENTITY gitURL    "https://github.com/&author;/&name;">
+  <!ENTITY pkgURL    "https://github.com/&author;/&name;/releases/download/v&version;/&name;-&version;-x86_64-1.txz">
+  <!ENTITY plugdir   "/usr/local/emhttp/plugins/&name;">
+  <!ENTITY cfgdir    "/boot/config/plugins/&name;">
+]>
+
+<PLUGIN  name="&name;"
+         author="&author;"
+         version="&version;"
+         launch="&launch;"
+         pluginURL="&pluginURL;"
+         min="6.12.0"
+         icon="balance-scale"
+         support="&gitURL;/issues">
+
+<CHANGES>
+## Perfectly Balanced
+
+### v2025.02.19
+- Initial release
+- Parallel filesystem scanning with jwalk
+- Greedy largest-first balancing algorithm with configurable tolerance slider
+- rsync-based file transfers with real-time progress via SSE
+- Safety: hard rejection of FUSE paths (/mnt/user/)
+- Open file detection via lsof before moves
+- Parity check warning
+</CHANGES>
+
+<!--
+============================================================
+Pre-install script: stop any running instance
+============================================================
+-->
+<FILE Run="/bin/bash">
+<INLINE>
+# Stop daemon if running
+if [ -f /var/run/&name;.pid ]; then
+    kill $(cat /var/run/&name;.pid) 2>/dev/null
+    rm -f /var/run/&name;.pid
+fi
+</INLINE>
+</FILE>
+
+<!--
+============================================================
+Download and install the Slackware package
+============================================================
+-->
+<FILE Name="&cfgdir;/&name;-&version;-x86_64-1.txz" Run="upgradepkg --install-new">
+<URL>&pkgURL;</URL>
+<MD5></MD5> <!-- empty = skip validation; build.sh injects hash for releases -->
+</FILE>
+
+<!--
+============================================================
+Default configuration file
+============================================================
+-->
+<FILE Run="/bin/bash">
+<INLINE>
+# Only create default config if none exists (preserve user settings on updates)
+if [ ! -f &cfgdir;/&name;.cfg ]; then
+  cat > &cfgdir;/&name;.cfg &lt;&lt; 'CFGEOF'
+# Perfectly Balanced configuration
+# Edit via the plugin Settings UI
+PORT="7091"
+SCAN_THREADS="2"
+SLIDER_ALPHA="0.5"
+MAX_TOLERANCE="0.15"
+MIN_FREE_HEADROOM="1073741824"
+EXCLUDED_DISKS=""
+WARN_PARITY_CHECK="yes"
+CFGEOF
+fi
+</INLINE>
+</FILE>
+
+<!--
+============================================================
+Default config template (for Settings page reset)
+============================================================
+-->
+<FILE Name="&plugdir;/default.cfg">
+<INLINE>
+<![CDATA[
+PORT="7091"
+SCAN_THREADS="2"
+SLIDER_ALPHA="0.5"
+MAX_TOLERANCE="0.15"
+MIN_FREE_HEADROOM="1073741824"
+EXCLUDED_DISKS=""
+WARN_PARITY_CHECK="yes"
+]]>
+</INLINE>
+</FILE>
+
+<!--
+============================================================
+Post-install: start the daemon
+============================================================
+-->
+<FILE Run="/bin/bash">
+<INLINE>
+# Start the daemon
+&plugdir;/rc.perfectly-balanced start
+
+echo "Perfectly Balanced v&version; installed."
+</INLINE>
+</FILE>
+
+<!--
+============================================================
+Uninstall script
+============================================================
+-->
+<FILE Run="/bin/bash" Method="remove">
+<INLINE>
+echo "Removing Perfectly Balanced..."
+
+# Stop daemon
+&plugdir;/rc.perfectly-balanced stop 2>/dev/null
+
+# Remove package
+removepkg &name;-&version;-x86_64-1 2>/dev/null
+
+# Remove runtime files
+rm -rf &plugdir;
+
+# Remove cached package (but keep config and database)
+rm -f &cfgdir;/&name;-*-x86_64-1.txz
+
+echo "Perfectly Balanced removed."
+echo "Note: Configuration and database preserved at &cfgdir;/"
+echo "To remove completely: rm -rf &cfgdir;"
+</INLINE>
+</FILE>
+
+</PLUGIN>

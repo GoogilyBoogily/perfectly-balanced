@@ -1,0 +1,106 @@
+#!/bin/bash
+# rc.perfectly-balanced — Unraid daemon control script
+# Usage: rc.perfectly-balanced start|stop|restart|status
+
+PLUGIN_DIR="/usr/local/emhttp/plugins/perfectly-balanced"
+CFG_DIR="/boot/config/plugins/perfectly-balanced"
+BINARY="${PLUGIN_DIR}/perfectly-balanced"
+PIDFILE="/var/run/perfectly-balanced.pid"
+LOG="/var/log/perfectly-balanced.log"
+
+start() {
+    # Stop any existing instance first
+    if [ -f "$PIDFILE" ]; then
+        PID=$(cat "$PIDFILE")
+        if kill -0 "$PID" 2>/dev/null; then
+            echo "Stopping existing instance (PID $PID)..."
+            kill "$PID"
+            sleep 2
+            kill -0 "$PID" 2>/dev/null && kill -9 "$PID"
+        fi
+        rm -f "$PIDFILE"
+    fi
+
+    if [ ! -x "$BINARY" ]; then
+        echo "Error: Binary not found at $BINARY"
+        exit 1
+    fi
+
+    mkdir -p "$CFG_DIR"
+
+    export PB_CONFIG_PATH="${CFG_DIR}/perfectly-balanced.cfg"
+    export PB_DB_PATH="${CFG_DIR}/catalog.db"
+    export RUST_LOG="perfectly_balanced=info"
+
+    echo "Starting Perfectly Balanced daemon..."
+    nohup "$BINARY" >> "$LOG" 2>&1 &
+    PID=$!
+
+    sleep 1
+    if kill -0 "$PID" 2>/dev/null; then
+        echo "$PID" > "$PIDFILE"
+        echo "Perfectly Balanced started (PID $PID)"
+    else
+        echo "Error: Daemon failed to start. Check $LOG"
+        exit 1
+    fi
+}
+
+stop() {
+    if [ -f "$PIDFILE" ]; then
+        PID=$(cat "$PIDFILE")
+        if kill -0 "$PID" 2>/dev/null; then
+            echo "Stopping Perfectly Balanced daemon (PID $PID)..."
+            kill "$PID"
+
+            # Wait up to 10 seconds for graceful shutdown
+            for i in $(seq 1 10); do
+                if ! kill -0 "$PID" 2>/dev/null; then
+                    break
+                fi
+                sleep 1
+            done
+
+            # Force kill if still running
+            if kill -0 "$PID" 2>/dev/null; then
+                echo "Force killing daemon..."
+                kill -9 "$PID"
+            fi
+
+            echo "Perfectly Balanced stopped."
+        else
+            echo "Daemon not running (stale PID file)."
+        fi
+        rm -f "$PIDFILE"
+    else
+        echo "Perfectly Balanced is not running."
+    fi
+}
+
+status() {
+    if [ -f "$PIDFILE" ]; then
+        PID=$(cat "$PIDFILE")
+        if kill -0 "$PID" 2>/dev/null; then
+            echo "Perfectly Balanced is running (PID $PID)"
+            exit 0
+        else
+            echo "Perfectly Balanced is not running (stale PID file)"
+            rm -f "$PIDFILE"
+            exit 1
+        fi
+    else
+        echo "Perfectly Balanced is not running"
+        exit 1
+    fi
+}
+
+case "$1" in
+    start)   start ;;
+    stop)    stop ;;
+    restart) stop; start ;;
+    status)  status ;;
+    *)
+        echo "Usage: $0 start|stop|restart|status"
+        exit 1
+        ;;
+esac

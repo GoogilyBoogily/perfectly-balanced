@@ -1,0 +1,7 @@
+# Cross-compilation configuration for Unraid (Slackware-based x86_64 Linux)
+# Build with: cross build --release --target x86_64-unknown-linux-musl
+
+[target.x86_64-unknown-linux-musl]
+# If using `cross` tool (recommended), no linker override needed.
+# If building natively on Linux, uncomment:
+# linker = "x86_64-linux-musl-gcc"

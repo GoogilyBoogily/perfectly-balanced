@@ -1,0 +1,864 @@
+Menu="Utilities"
+Title="Perfectly Balanced"
+Icon="balance-scale"
+Tag="balance-scale"
+---
+<?php
+$plugin = "perfectly-balanced";
+$cfg = parse_plugin_cfg($plugin);
+$port = $cfg['PORT'] ?? '7091';
+$api_base = "http://127.0.0.1:{$port}";
+?>
+
+<style>
+:root {
+    --pb-green: #4caf50;
+    --pb-yellow: #ff9800;
+    --pb-red: #f44336;
+    --pb-blue: #2196f3;
+    --pb-gray: #9e9e9e;
+}
+
+.pb-container {
+    max-width: 1200px;
+    margin: 0 auto;
+}
+
+.pb-tabs {
+    display: flex;
+    gap: 0;
+    border-bottom: 2px solid var(--line-color, #333);
+    margin-bottom: 20px;
+}
+
+.pb-tab {
+    padding: 10px 20px;
+    cursor: pointer;
+    border: none;
+    background: none;
+    font-size: 14px;
+    font-weight: bold;
+    color: var(--text-color, #ccc);
+    border-bottom: 3px solid transparent;
+    transition: all 0.2s;
+}
+
+.pb-tab:hover {
+    color: var(--header-color, #fff);
+}
+
+.pb-tab.active {
+    color: var(--header-color, #fff);
+    border-bottom-color: var(--pb-blue);
+}
+
+.pb-tab-content {
+    display: none;
+}
+
+.pb-tab-content.active {
+    display: block;
+}
+
+.pb-card {
+    background: var(--content-color, #1a1a1a);
+    border: 1px solid var(--line-color, #333);
+    border-radius: 4px;
+    padding: 20px;
+    margin-bottom: 15px;
+}
+
+.pb-disk-bar-container {
+    margin: 8px 0;
+}
+
+.pb-disk-label {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 4px;
+    font-size: 13px;
+}
+
+.pb-disk-bar {
+    height: 24px;
+    background: var(--line-color, #333);
+    border-radius: 3px;
+    overflow: hidden;
+    position: relative;
+}
+
+.pb-disk-bar-fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.5s ease;
+}
+
+.pb-disk-bar-fill.green { background: var(--pb-green); }
+.pb-disk-bar-fill.yellow { background: var(--pb-yellow); }
+.pb-disk-bar-fill.red { background: var(--pb-red); }
+.pb-disk-bar-fill.gray { background: var(--pb-gray); opacity: 0.5; }
+
+.pb-target-line {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: white;
+    opacity: 0.7;
+    z-index: 1;
+}
+
+.pb-slider-container {
+    margin: 20px 0;
+}
+
+.pb-slider-container input[type="range"] {
+    width: 100%;
+    margin: 10px 0;
+}
+
+.pb-slider-labels {
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+    color: var(--text-color, #999);
+}
+
+.pb-btn {
+    padding: 8px 20px;
+    border: none;
+    border-radius: 3px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: bold;
+    transition: opacity 0.2s;
+}
+
+.pb-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.pb-btn-primary { background: var(--pb-blue); color: white; }
+.pb-btn-success { background: var(--pb-green); color: white; }
+.pb-btn-danger { background: var(--pb-red); color: white; }
+.pb-btn-warning { background: var(--pb-yellow); color: black; }
+
+.pb-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+}
+
+.pb-table th, .pb-table td {
+    padding: 8px 12px;
+    text-align: left;
+    border-bottom: 1px solid var(--line-color, #333);
+}
+
+.pb-table th {
+    font-weight: bold;
+    color: var(--header-color, #fff);
+}
+
+.pb-status-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-size: 11px;
+    font-weight: bold;
+}
+
+.pb-status-pending { background: var(--pb-gray); color: white; }
+.pb-status-in_progress { background: var(--pb-blue); color: white; }
+.pb-status-completed { background: var(--pb-green); color: white; }
+.pb-status-failed { background: var(--pb-red); color: white; }
+.pb-status-skipped { background: var(--pb-yellow); color: black; }
+
+.pb-progress {
+    height: 6px;
+    background: var(--line-color, #333);
+    border-radius: 3px;
+    overflow: hidden;
+    margin: 10px 0;
+}
+
+.pb-progress-fill {
+    height: 100%;
+    background: var(--pb-blue);
+    transition: width 0.3s;
+}
+
+.pb-summary {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 15px;
+    margin: 15px 0;
+}
+
+.pb-summary-item {
+    text-align: center;
+}
+
+.pb-summary-value {
+    font-size: 24px;
+    font-weight: bold;
+    color: var(--header-color, #fff);
+}
+
+.pb-summary-label {
+    font-size: 12px;
+    color: var(--text-color, #999);
+}
+
+.pb-log {
+    background: #000;
+    color: #0f0;
+    padding: 10px;
+    border-radius: 3px;
+    max-height: 200px;
+    overflow-y: auto;
+    font-family: monospace;
+    font-size: 12px;
+}
+</style>
+
+<div class="pb-container">
+    <div class="pb-tabs">
+        <button class="pb-tab active" data-tab="dashboard">
+            <i class="fa fa-tachometer"></i> Dashboard
+        </button>
+        <button class="pb-tab" data-tab="scan">
+            <i class="fa fa-search"></i> Scan
+        </button>
+        <button class="pb-tab" data-tab="plan">
+            <i class="fa fa-tasks"></i> Plan
+        </button>
+        <button class="pb-tab" data-tab="settings">
+            <i class="fa fa-cog"></i> Settings
+        </button>
+    </div>
+
+    <!-- Dashboard Tab -->
+    <div id="tab-dashboard" class="pb-tab-content active">
+        <div class="pb-card">
+            <h3>Array Disk Utilization</h3>
+            <p id="dashboard-status" style="font-size:12px;color:var(--text-color,#999)">Loading...</p>
+            <div id="disk-bars"></div>
+        </div>
+    </div>
+
+    <!-- Scan Tab -->
+    <div id="tab-scan" class="pb-tab-content">
+        <div class="pb-card">
+            <h3>Filesystem Scan</h3>
+            <p>Scan array disks to build the file catalog. This is required before generating a balance plan.</p>
+            <div style="display:flex;gap:15px;align-items:center;margin:15px 0">
+                <label>Threads:
+                    <select id="scan-threads">
+                        <option value="1">1</option>
+                        <option value="2" selected>2</option>
+                        <option value="4">4</option>
+                        <option value="8">8</option>
+                    </select>
+                </label>
+                <button class="pb-btn pb-btn-primary" id="btn-scan" onclick="startScan()">
+                    <i class="fa fa-search"></i> Start Scan
+                </button>
+            </div>
+            <div id="scan-progress" style="display:none">
+                <div class="pb-progress"><div class="pb-progress-fill" id="scan-bar" style="width:0%"></div></div>
+                <div id="scan-log" class="pb-log"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Plan Tab -->
+    <div id="tab-plan" class="pb-tab-content">
+        <div class="pb-card">
+            <h3>Balance Plan</h3>
+            <div class="pb-slider-container">
+                <label><strong>Balance Tradeoff</strong></label>
+                <input type="range" id="alpha-slider" min="0" max="100" value="50" oninput="updateSliderLabel()">
+                <div class="pb-slider-labels">
+                    <span>Fewest Moves</span>
+                    <span id="slider-value">50%</span>
+                    <span>Perfect Balance</span>
+                </div>
+            </div>
+            <button class="pb-btn pb-btn-primary" id="btn-plan" onclick="generatePlan()">
+                <i class="fa fa-calculator"></i> Generate Plan
+            </button>
+        </div>
+
+        <div id="plan-result" style="display:none">
+            <div class="pb-card">
+                <h3>Plan Summary</h3>
+                <div class="pb-summary" id="plan-summary"></div>
+                <div style="margin-top:15px">
+                    <button class="pb-btn pb-btn-success" id="btn-execute" onclick="executePlan()">
+                        <i class="fa fa-play"></i> Execute Plan
+                    </button>
+                    <button class="pb-btn pb-btn-danger" id="btn-cancel" onclick="cancelExecution()" style="display:none">
+                        <i class="fa fa-stop"></i> Cancel
+                    </button>
+                </div>
+            </div>
+            <div class="pb-card">
+                <h3>Planned Moves</h3>
+                <table class="pb-table">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>File</th>
+                            <th>Size</th>
+                            <th>From</th>
+                            <th>To</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody id="moves-table"></tbody>
+                </table>
+            </div>
+        </div>
+
+        <div id="execution-progress" style="display:none">
+            <div class="pb-card">
+                <h3>Execution Progress</h3>
+                <div class="pb-progress"><div class="pb-progress-fill" id="exec-bar" style="width:0%"></div></div>
+                <p id="exec-status">Preparing...</p>
+                <div id="exec-log" class="pb-log"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Settings Tab -->
+    <div id="tab-settings" class="pb-tab-content">
+        <div class="pb-card">
+            <h3>Plugin Settings</h3>
+            <div id="settings-form">
+                <p>Loading settings...</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+const API = '<?=$api_base?>';
+let currentPlanId = null;
+let isExecuting = false;
+let eventSource = null;
+
+// ── Tab Navigation ──────────────────────────────────────────────────
+
+document.querySelectorAll('.pb-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+        document.querySelectorAll('.pb-tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.pb-tab-content').forEach(c => c.classList.remove('active'));
+        tab.classList.add('active');
+        document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
+
+        if (tab.dataset.tab === 'dashboard') loadDisks();
+        if (tab.dataset.tab === 'settings') loadSettings();
+    });
+});
+
+// ── Utility Functions ───────────────────────────────────────────────
+
+function formatBytes(bytes) {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+}
+
+function pct(val) { return (val * 100).toFixed(1) + '%'; }
+
+function escapeHtml(str) {
+    const el = document.createElement('span');
+    el.textContent = str;
+    return el.innerHTML;
+}
+
+function barColor(util, target) {
+    const delta = Math.abs(util - target);
+    if (delta < 0.05) return 'green';
+    if (delta < 0.10) return 'yellow';
+    return 'red';
+}
+
+async function apiCall(path, opts = {}) {
+    try {
+        const res = await fetch(API + path, {
+            headers: { 'Content-Type': 'application/json' },
+            ...opts,
+        });
+        return await res.json();
+    } catch (e) {
+        console.error('API call failed:', path, e);
+        return { success: false, error: 'Connection to daemon failed. Is it running?' };
+    }
+}
+
+// ── SSE Connection ──────────────────────────────────────────────────
+
+function connectSSE() {
+    if (eventSource) eventSource.close();
+    eventSource = new EventSource(API + '/api/events');
+
+    eventSource.addEventListener('scan_progress', (e) => {
+        const d = JSON.parse(e.data).data;
+        logLine('scan-log', `[${d.disk}] ${d.files_scanned} files, ${formatBytes(d.bytes_cataloged)}`);
+    });
+
+    eventSource.addEventListener('scan_disk_complete', (e) => {
+        const d = JSON.parse(e.data).data;
+        logLine('scan-log', `✓ ${d.disk} complete: ${d.total_files} files, ${formatBytes(d.total_bytes)}`);
+    });
+
+    eventSource.addEventListener('scan_complete', (e) => {
+        const d = JSON.parse(e.data).data;
+        logLine('scan-log', `✓ Scan complete: ${d.total_disks} disks, ${d.total_files} files in ${d.duration_seconds.toFixed(1)}s`);
+        document.getElementById('btn-scan').disabled = false;
+        loadDisks();
+    });
+
+    eventSource.addEventListener('plan_ready', (e) => {
+        const d = JSON.parse(e.data).data;
+        logLine('exec-log', `Plan ready: ${d.total_moves} moves, ${formatBytes(d.total_bytes)}`);
+    });
+
+    eventSource.addEventListener('move_progress', (e) => {
+        const d = JSON.parse(e.data).data;
+        const bar = document.getElementById('exec-bar');
+        if (bar) bar.style.width = d.percent + '%';
+        const status = document.getElementById('exec-status');
+        if (status) status.textContent = `Moving: ${d.file_path} — ${d.percent.toFixed(0)}% at ${d.speed}`;
+    });
+
+    eventSource.addEventListener('move_complete', (e) => {
+        const d = JSON.parse(e.data).data;
+        const icon = d.status === 'success' ? '✓' : '✗';
+        logLine('exec-log', `${icon} Move #${d.move_id}: ${d.status}`);
+        // Update status badge in table
+        const badge = document.getElementById('move-status-' + d.move_id);
+        if (badge) {
+            badge.className = 'pb-status-badge pb-status-' + d.status.replace('success','completed');
+            badge.textContent = d.status;
+        }
+    });
+
+    eventSource.addEventListener('execution_complete', (e) => {
+        const d = JSON.parse(e.data).data;
+        logLine('exec-log', `✓ Execution complete: ${d.moves_completed} completed, ${d.moves_failed} failed, ${d.moves_skipped} skipped`);
+        isExecuting = false;
+        document.getElementById('btn-execute').disabled = false;
+        document.getElementById('btn-cancel').style.display = 'none';
+        loadDisks();
+    });
+
+    eventSource.addEventListener('daemon_error', (e) => {
+        const d = JSON.parse(e.data).data;
+        logLine('scan-log', `ERROR: ${d.message}`);
+        logLine('exec-log', `ERROR: ${d.message}`);
+    });
+
+    // Handle native EventSource connection errors
+    eventSource.onerror = () => {
+        logLine('scan-log', 'SSE connection lost, reconnecting...');
+    };
+}
+
+function logLine(logId, msg) {
+    const log = document.getElementById(logId);
+    if (!log) return;
+    const line = document.createElement('div');
+    const ts = new Date().toLocaleTimeString();
+    line.textContent = `[${ts}] ${msg}`;
+    log.appendChild(line);
+    log.scrollTop = log.scrollHeight;
+}
+
+// ── Dashboard ───────────────────────────────────────────────────────
+
+async function loadDisks() {
+    const res = await apiCall('/api/disks');
+    const container = document.getElementById('disk-bars');
+    const status = document.getElementById('dashboard-status');
+
+    if (!res.success || !res.data || res.data.length === 0) {
+        container.innerHTML = '<p>No disks found. Start a scan first.</p>';
+        status.textContent = res.error || 'No data available.';
+        return;
+    }
+
+    const disks = res.data;
+    const totalUsed = disks.reduce((s, d) => s + d.used_bytes, 0);
+    const totalCap = disks.reduce((s, d) => s + d.total_bytes, 0);
+    const target = totalCap > 0 ? totalUsed / totalCap : 0;
+
+    status.textContent = `${disks.length} disks | Target utilization: ${pct(target)} | Total: ${formatBytes(totalUsed)} / ${formatBytes(totalCap)}`;
+
+    // Build dashboard using safe DOM methods
+    container.innerHTML = '';
+    for (const d of disks) {
+        const util = d.total_bytes > 0 ? d.used_bytes / d.total_bytes : 0;
+        const color = d.included ? barColor(util, target) : 'gray';
+        const toggleLabel = d.included ? 'Exclude' : 'Include';
+        const toggleEndpoint = d.included ? 'exclude' : 'include';
+
+        const row = document.createElement('div');
+        row.className = 'pb-disk-bar-container';
+
+        const labelRow = document.createElement('div');
+        labelRow.className = 'pb-disk-label';
+
+        const leftSpan = document.createElement('span');
+        const nameStrong = document.createElement('strong');
+        nameStrong.textContent = d.disk_name;
+        leftSpan.appendChild(nameStrong);
+        leftSpan.appendChild(document.createTextNode((d.included ? '' : ' (excluded)') + ' — ' + (d.filesystem || 'unknown') + ' '));
+
+        const toggleBtn = document.createElement('button');
+        toggleBtn.className = 'pb-btn';
+        toggleBtn.style.cssText = 'padding:1px 8px;font-size:11px;background:var(--line-color,#444);color:var(--text-color,#ccc)';
+        toggleBtn.textContent = toggleLabel;
+        toggleBtn.addEventListener('click', () => toggleDisk(d.id, toggleEndpoint));
+        leftSpan.appendChild(toggleBtn);
+
+        const rightSpan = document.createElement('span');
+        rightSpan.textContent = formatBytes(d.used_bytes) + ' / ' + formatBytes(d.total_bytes) + ' (' + pct(util) + ')';
+
+        labelRow.appendChild(leftSpan);
+        labelRow.appendChild(rightSpan);
+
+        const barDiv = document.createElement('div');
+        barDiv.className = 'pb-disk-bar';
+
+        const targetLine = document.createElement('div');
+        targetLine.className = 'pb-target-line';
+        targetLine.style.left = (target * 100).toFixed(1) + '%';
+
+        const fillDiv = document.createElement('div');
+        fillDiv.className = 'pb-disk-bar-fill ' + color;
+        fillDiv.style.width = (util * 100).toFixed(1) + '%';
+
+        barDiv.appendChild(targetLine);
+        barDiv.appendChild(fillDiv);
+
+        row.appendChild(labelRow);
+        row.appendChild(barDiv);
+        container.appendChild(row);
+    }
+}
+
+// ── Scanning ────────────────────────────────────────────────────────
+
+async function startScan() {
+    const threads = parseInt(document.getElementById('scan-threads').value);
+    document.getElementById('btn-scan').disabled = true;
+    document.getElementById('scan-progress').style.display = 'block';
+    document.getElementById('scan-log').textContent = '';
+    logLine('scan-log', 'Starting scan...');
+
+    const res = await apiCall('/api/scan', {
+        method: 'POST',
+        body: JSON.stringify({ threads }),
+    });
+
+    if (!res.success) {
+        logLine('scan-log', 'Error: ' + res.error);
+        document.getElementById('btn-scan').disabled = false;
+    }
+}
+
+// ── Planning ────────────────────────────────────────────────────────
+
+function updateSliderLabel() {
+    const val = document.getElementById('alpha-slider').value;
+    document.getElementById('slider-value').textContent = val + '%';
+}
+
+function renderPlanSummary(plan) {
+    const container = document.getElementById('plan-summary');
+    while (container.firstChild) container.removeChild(container.firstChild);
+
+    const items = [
+        { value: plan.total_moves, label: 'Total Moves' },
+        { value: formatBytes(plan.total_bytes_to_move), label: 'Data to Move' },
+        { value: pct(plan.target_utilization), label: 'Target Utilization' },
+        {
+            value: (plan.initial_imbalance ? pct(plan.initial_imbalance) : '-')
+                + ' → ' + (plan.projected_imbalance ? pct(plan.projected_imbalance) : '-'),
+            label: 'Max Imbalance',
+        },
+    ];
+
+    for (const item of items) {
+        const div = document.createElement('div');
+        div.className = 'pb-summary-item';
+        const valueDiv = document.createElement('div');
+        valueDiv.className = 'pb-summary-value';
+        valueDiv.textContent = item.value;
+        const labelDiv = document.createElement('div');
+        labelDiv.className = 'pb-summary-label';
+        labelDiv.textContent = item.label;
+        div.appendChild(valueDiv);
+        div.appendChild(labelDiv);
+        container.appendChild(div);
+    }
+}
+
+function renderMovesTable(moves) {
+    const tbody = document.getElementById('moves-table');
+    while (tbody.firstChild) tbody.removeChild(tbody.firstChild);
+
+    if (!moves || moves.length === 0) {
+        const tr = document.createElement('tr');
+        const td = document.createElement('td');
+        td.colSpan = 6;
+        td.textContent = 'No moves needed — array is balanced!';
+        tr.appendChild(td);
+        tbody.appendChild(tr);
+        return;
+    }
+
+    for (const m of moves) {
+        const tr = document.createElement('tr');
+
+        const tdOrder = document.createElement('td');
+        tdOrder.textContent = m.move_order;
+
+        const tdFile = document.createElement('td');
+        tdFile.textContent = m.file_path;
+        tdFile.title = m.file_path;
+        tdFile.style.cssText = 'max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+
+        const tdSize = document.createElement('td');
+        tdSize.textContent = formatBytes(m.file_size);
+
+        const tdFrom = document.createElement('td');
+        tdFrom.textContent = m.source_disk_name;
+
+        const tdTo = document.createElement('td');
+        tdTo.textContent = m.target_disk_name;
+
+        const tdStatus = document.createElement('td');
+        const badge = document.createElement('span');
+        badge.id = 'move-status-' + m.id;
+        badge.className = 'pb-status-badge pb-status-' + m.status;
+        badge.textContent = m.status;
+        tdStatus.appendChild(badge);
+
+        tr.appendChild(tdOrder);
+        tr.appendChild(tdFile);
+        tr.appendChild(tdSize);
+        tr.appendChild(tdFrom);
+        tr.appendChild(tdTo);
+        tr.appendChild(tdStatus);
+        tbody.appendChild(tr);
+    }
+}
+
+async function generatePlan() {
+    if (isExecuting) {
+        alert('Cannot generate a new plan while execution is in progress.');
+        return;
+    }
+
+    const alpha = parseInt(document.getElementById('alpha-slider').value) / 100;
+    document.getElementById('btn-plan').disabled = true;
+
+    const res = await apiCall('/api/plan', {
+        method: 'POST',
+        body: JSON.stringify({ alpha }),
+    });
+
+    document.getElementById('btn-plan').disabled = false;
+
+    if (!res.success) {
+        alert('Planning failed: ' + res.error);
+        return;
+    }
+
+    const plan = res.data;
+    currentPlanId = plan.id;
+
+    document.getElementById('plan-result').style.display = 'block';
+    renderPlanSummary(plan);
+    renderMovesTable(plan.moves);
+}
+
+// ── Execution ───────────────────────────────────────────────────────
+
+async function executePlan() {
+    if (!currentPlanId) return;
+    if (!confirm('Execute the balance plan? Files will be moved via rsync.')) return;
+
+    isExecuting = true;
+    document.getElementById('btn-execute').disabled = true;
+    document.getElementById('btn-cancel').style.display = 'inline-block';
+    document.getElementById('execution-progress').style.display = 'block';
+    document.getElementById('exec-log').textContent = '';
+    logLine('exec-log', 'Starting execution...');
+
+    const res = await apiCall(`/api/plan/${currentPlanId}/execute`, { method: 'POST' });
+    if (!res.success) {
+        isExecuting = false;
+        logLine('exec-log', 'Error: ' + res.error);
+        document.getElementById('btn-execute').disabled = false;
+        document.getElementById('btn-cancel').style.display = 'none';
+    }
+}
+
+async function cancelExecution() {
+    if (!confirm('Cancel the current operation?')) return;
+    await apiCall(`/api/plan/${currentPlanId}/cancel`, { method: 'POST' });
+    logLine('exec-log', 'Cancellation requested...');
+}
+
+// ── Disk Include/Exclude ─────────────────────────────────────────────
+
+async function toggleDisk(diskId, action) {
+    const res = await apiCall('/api/disks/' + diskId + '/' + action, { method: 'POST' });
+    if (res.success) {
+        loadDisks();
+    } else {
+        alert('Failed to ' + action + ' disk: ' + (res.error || 'Unknown error'));
+    }
+}
+
+// ── Settings ────────────────────────────────────────────────────────
+
+function buildSettingsForm(s) {
+    const form = document.getElementById('settings-form');
+    const headroomGB = (s.min_free_headroom / (1024 * 1024 * 1024)).toFixed(1);
+    while (form.firstChild) form.removeChild(form.firstChild);
+
+    const table = document.createElement('table');
+    table.className = 'pb-table';
+
+    function addRow(label, inputEl) {
+        const tr = document.createElement('tr');
+        const tdLabel = document.createElement('td');
+        const strong = document.createElement('strong');
+        strong.textContent = label;
+        tdLabel.appendChild(strong);
+        const tdInput = document.createElement('td');
+        tdInput.appendChild(inputEl);
+        tr.appendChild(tdLabel);
+        tr.appendChild(tdInput);
+        table.appendChild(tr);
+    }
+
+    const portSpan = document.createElement('span');
+    portSpan.textContent = s.port + ' (restart required to change)';
+    addRow('Port', portSpan);
+
+    const threadsSelect = document.createElement('select');
+    threadsSelect.id = 'set-threads';
+    [1,2,4,8].forEach(v => {
+        const opt = document.createElement('option');
+        opt.value = v; opt.textContent = v;
+        if (v === s.scan_threads) opt.selected = true;
+        threadsSelect.appendChild(opt);
+    });
+    addRow('Scan Threads', threadsSelect);
+
+    const alphaInput = document.createElement('input');
+    alphaInput.type = 'number'; alphaInput.id = 'set-alpha';
+    alphaInput.min = '0'; alphaInput.max = '100'; alphaInput.step = '1';
+    alphaInput.value = (s.slider_alpha * 100).toFixed(0);
+    alphaInput.style.width = '80px';
+    const alphaWrap = document.createElement('span');
+    alphaWrap.appendChild(alphaInput);
+    alphaWrap.appendChild(document.createTextNode(' %'));
+    addRow('Default Slider Alpha', alphaWrap);
+
+    const tolInput = document.createElement('input');
+    tolInput.type = 'number'; tolInput.id = 'set-tolerance';
+    tolInput.min = '0'; tolInput.max = '100'; tolInput.step = '1';
+    tolInput.value = (s.max_tolerance * 100).toFixed(0);
+    tolInput.style.width = '80px';
+    const tolWrap = document.createElement('span');
+    tolWrap.appendChild(tolInput);
+    tolWrap.appendChild(document.createTextNode(' %'));
+    addRow('Max Tolerance', tolWrap);
+
+    const headInput = document.createElement('input');
+    headInput.type = 'number'; headInput.id = 'set-headroom';
+    headInput.min = '0'; headInput.step = '0.1';
+    headInput.value = headroomGB;
+    headInput.style.width = '80px';
+    const headWrap = document.createElement('span');
+    headWrap.appendChild(headInput);
+    headWrap.appendChild(document.createTextNode(' GB'));
+    addRow('Min Free Headroom', headWrap);
+
+    const parityCheck = document.createElement('input');
+    parityCheck.type = 'checkbox'; parityCheck.id = 'set-parity';
+    parityCheck.checked = s.warn_parity_check;
+    addRow('Warn on Parity Check', parityCheck);
+
+    form.appendChild(table);
+
+    const btnRow = document.createElement('div');
+    btnRow.style.marginTop = '15px';
+    const saveBtn = document.createElement('button');
+    saveBtn.className = 'pb-btn pb-btn-primary';
+    saveBtn.textContent = 'Save Settings';
+    saveBtn.addEventListener('click', saveSettings);
+    btnRow.appendChild(saveBtn);
+
+    const saveMsg = document.createElement('span');
+    saveMsg.id = 'settings-msg';
+    saveMsg.style.cssText = 'margin-left:12px;font-size:12px';
+    btnRow.appendChild(saveMsg);
+
+    form.appendChild(btnRow);
+}
+
+async function loadSettings() {
+    const res = await apiCall('/api/settings');
+    if (!res.success) {
+        document.getElementById('settings-form').textContent =
+            'Failed to load settings: ' + (res.error || 'Unknown error');
+        return;
+    }
+    buildSettingsForm(res.data);
+}
+
+async function saveSettings() {
+    const body = {
+        scan_threads: parseInt(document.getElementById('set-threads').value),
+        slider_alpha: parseInt(document.getElementById('set-alpha').value) / 100,
+        max_tolerance: parseInt(document.getElementById('set-tolerance').value) / 100,
+        min_free_headroom: Math.round(parseFloat(document.getElementById('set-headroom').value) * 1024 * 1024 * 1024),
+        warn_parity_check: document.getElementById('set-parity').checked,
+    };
+    const msg = document.getElementById('settings-msg');
+    const res = await apiCall('/api/settings', { method: 'POST', body: JSON.stringify(body) });
+    if (res.success) {
+        msg.style.color = 'var(--pb-green)';
+        msg.textContent = 'Saved!';
+    } else {
+        msg.style.color = 'var(--pb-red)';
+        msg.textContent = 'Error: ' + (res.error || 'Unknown error');
+    }
+    setTimeout(() => { msg.textContent = ''; }, 3000);
+}
+
+// ── Initialization ──────────────────────────────────────────────────
+
+function init() {
+    connectSSE();
+    loadDisks();
+}
+
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+} else {
+    init();
+}
+</script>

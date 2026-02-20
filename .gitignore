@@ -1,0 +1,9 @@
+/target
+*.db
+*.db-wal
+*.db-shm
+*.txz
+*.swp
+*.swo
+dev.cfg
+.DS_Store
