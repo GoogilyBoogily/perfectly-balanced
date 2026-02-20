@@ -4,9 +4,8 @@ use crate::events::{Event, EventHub};
 use anyhow::{bail, Result};
 use jwalk::{Parallelism, WalkDir};
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 use std::time::Instant;
+use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
 /// Batch size for SQLite inserts during scanning.
@@ -21,7 +20,7 @@ pub(crate) struct ScanContext<'a> {
     pub disk_id: i64,
     pub mount_path: &'a str,
     pub event_hub: &'a EventHub,
-    pub cancel: Arc<AtomicBool>,
+    pub cancel: CancellationToken,
     pub num_threads: usize,
 }
 
@@ -143,7 +142,7 @@ fn run_walk(ctx: &ScanContext<'_>, disk_name: &str) -> Result<ScanStats> {
     let walker = WalkDir::new(ctx.mount_path).parallelism(parallelism).skip_hidden(false);
 
     for entry_result in walker {
-        if ctx.cancel.load(Ordering::Relaxed) {
+        if ctx.cancel.is_cancelled() {
             info!("Scan cancelled for {}", ctx.mount_path);
             bail!("Scan cancelled");
         }

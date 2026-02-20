@@ -1,4 +1,4 @@
-use super::models::{MoveStatus, PlannedMove, PlannedMoveDetail};
+use super::models::{MoveStatus, MovePathInfo, PlannedMove, PlannedMoveDetail};
 use super::Database;
 use anyhow::Result;
 use rusqlite::params;
@@ -131,5 +131,50 @@ impl Database {
             |row| row.get(0),
         )?;
         Ok(max)
+    }
+
+    /// Get lightweight path info for a set of move IDs (used by crash recovery).
+    pub fn get_moves_path_info(&self, ids: &[i64]) -> Result<Vec<MovePathInfo>> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let conn = self.conn();
+        let placeholders: String = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let sql = format!(
+            "SELECT m.id, m.file_path, s.mount_path, t.mount_path \
+             FROM planned_moves m \
+             JOIN disks s ON m.source_disk_id = s.id \
+             JOIN disks t ON m.target_disk_id = t.id \
+             WHERE m.id IN ({placeholders})"
+        );
+
+        let mut stmt = conn.prepare(&sql)?;
+        let params: Vec<&dyn rusqlite::types::ToSql> =
+            ids.iter().map(|id| id as &dyn rusqlite::types::ToSql).collect();
+
+        let moves = stmt
+            .query_map(params.as_slice(), |row| {
+                Ok(MovePathInfo {
+                    id: row.get(0)?,
+                    file_path: row.get(1)?,
+                    source_mount: row.get(2)?,
+                    target_mount: row.get(3)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(moves)
+    }
+
+    /// Mark all in_progress moves for a plan as failed (used by panic guard).
+    pub fn fail_in_progress_moves(&self, plan_id: i64) -> Result<usize> {
+        let conn = self.conn();
+        let count = conn.execute(
+            "UPDATE planned_moves SET status = 'failed', error_message = 'Task panicked' \
+             WHERE plan_id = ?1 AND status = 'in_progress'",
+            params![plan_id],
+        )?;
+        Ok(count)
     }
 }

@@ -2,8 +2,9 @@ use crate::api::responses::{ApiResponse, ScanRequest};
 use crate::{scanner, AppState, DaemonState, DaemonStatus};
 use axum::{extract::State, response::IntoResponse, Json};
 use std::collections::HashMap;
-use std::sync::atomic::Ordering;
+use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
+use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 
 pub(crate) async fn start_scan(
@@ -21,37 +22,48 @@ pub(crate) async fn start_scan(
     }
 
     let threads = req.threads.unwrap_or(state.config.scan_threads);
-    state.reset_cancel();
+    let token = state.new_operation_token().await;
     let state_clone = state.clone();
 
-    tokio::task::spawn_blocking(move || {
+    let handle = tokio::task::spawn_blocking(move || {
         let rt = tokio::runtime::Handle::current();
 
-        rt.block_on(async {
-            *state_clone.status.write().await = DaemonStatus::scanning("Discovering disks...");
-        });
+        let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            rt.block_on(async {
+                *state_clone.status.write().await =
+                    DaemonStatus::scanning("Discovering disks...");
+            });
 
-        let discovered = match scanner::discover_disks(&state_clone.config.mnt_base) {
-            Ok(d) => d,
-            Err(e) => {
-                error!("Disk discovery failed: {}", e);
-                let _ = state_clone.event_hub.publish(crate::events::Event::DaemonError {
-                    message: format!("Disk discovery failed: {e}"),
-                });
-                rt.block_on(async {
-                    *state_clone.status.write().await = DaemonStatus::idle();
-                });
-                return;
-            }
-        };
+            let discovered = match scanner::discover_disks(&state_clone.config.mnt_base) {
+                Ok(d) => d,
+                Err(e) => {
+                    error!("Disk discovery failed: {}", e);
+                    let _ = state_clone.event_hub.publish(crate::events::Event::DaemonError {
+                        message: format!("Disk discovery failed: {e}"),
+                    });
+                    return;
+                }
+            };
 
-        info!("Discovered {} disks", discovered.len());
-        scan_discovered_disks(&state_clone, &discovered, &req, threads, &rt);
+            info!("Discovered {} disks", discovered.len());
+            scan_discovered_disks(&state_clone, &discovered, &req, threads, &rt, &token);
+        }));
 
+        if result.is_err() {
+            error!("Scan task panicked!");
+            let _ = state_clone.event_hub.publish(crate::events::Event::DaemonError {
+                message: "Scan task panicked".to_string(),
+            });
+        }
+
+        // ALWAYS reset to idle — both normal and panic paths
         rt.block_on(async {
             *state_clone.status.write().await = DaemonStatus::idle();
+            *state_clone.background_task.lock().await = None;
         });
     });
+
+    *state.background_task.lock().await = Some(handle);
 
     Json(ApiResponse::ok("Scan started"))
 }
@@ -70,12 +82,14 @@ fn parse_mount_table() -> HashMap<String, String> {
     table
 }
 
+#[allow(clippy::too_many_arguments)]
 fn scan_discovered_disks(
     state: &Arc<AppState>,
     discovered: &[scanner::DiscoveredDisk],
     req: &ScanRequest,
     threads: usize,
     rt: &tokio::runtime::Handle,
+    cancel: &CancellationToken,
 ) {
     let mut total_files = 0u64;
     let mut total_bytes = 0u64;
@@ -124,7 +138,7 @@ fn scan_discovered_disks(
                 DaemonStatus::scanning(format!("Scanning {}...", disk.name));
         });
 
-        if state.cancel_flag.load(Ordering::Relaxed) {
+        if cancel.is_cancelled() {
             info!("Scan cancelled by user");
             break;
         }
@@ -134,7 +148,7 @@ fn scan_discovered_disks(
             disk_id,
             mount_path: &disk.mount_path,
             event_hub: &state.event_hub,
-            cancel: state.cancel_flag.clone(),
+            cancel: cancel.clone(),
             num_threads: threads,
         };
         match scanner::scan_disk(&ctx) {

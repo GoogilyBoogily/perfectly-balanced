@@ -1,3 +1,5 @@
+pub(crate) mod recovery;
+
 use anyhow::{bail, Context, Result};
 use regex::Regex;
 use std::sync::OnceLock;

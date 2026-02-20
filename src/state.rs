@@ -1,6 +1,6 @@
 use serde::Serialize;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
 
 use crate::config::AppConfig;
 use crate::db::Database;
@@ -12,19 +12,39 @@ pub struct AppState {
     pub config: AppConfig,
     pub event_hub: EventHub,
     pub status: tokio::sync::RwLock<DaemonStatus>,
-    /// Shared cancellation flag for the currently running operation (scan or execution).
-    pub cancel_flag: Arc<AtomicBool>,
+    /// Per-operation cancellation token, replaced on each new scan/execution.
+    cancel_token: tokio::sync::Mutex<CancellationToken>,
+    /// Handle to the currently running background task (scan or execution).
+    pub background_task: tokio::sync::Mutex<Option<JoinHandle<()>>>,
+    /// Handle to the in-flight rsync child process, for kill-on-shutdown.
+    pub rsync_child: tokio::sync::Mutex<Option<tokio::process::Child>>,
 }
 
 impl AppState {
-    /// Reset the cancel flag to `false` before starting a new operation.
-    pub fn reset_cancel(&self) {
-        self.cancel_flag.store(false, Ordering::SeqCst);
+    pub fn new(db: Database, config: AppConfig, event_hub: EventHub) -> Self {
+        Self {
+            db,
+            config,
+            event_hub,
+            status: tokio::sync::RwLock::new(DaemonStatus::idle()),
+            cancel_token: tokio::sync::Mutex::new(CancellationToken::new()),
+            background_task: tokio::sync::Mutex::new(None),
+            rsync_child: tokio::sync::Mutex::new(None),
+        }
     }
 
-    /// Request cancellation of the current operation.
-    pub fn request_cancel(&self) {
-        self.cancel_flag.store(true, Ordering::SeqCst);
+    /// Create a fresh `CancellationToken` for a new operation.
+    /// Returns a clone for the spawned task to monitor.
+    pub async fn new_operation_token(&self) -> CancellationToken {
+        let token = CancellationToken::new();
+        *self.cancel_token.lock().await = token.clone();
+        token
+    }
+
+    /// Cancel the current operation (idempotent — safe to call from both
+    /// the cancel API endpoint and the shutdown sequence).
+    pub async fn request_cancel(&self) {
+        self.cancel_token.lock().await.cancel();
     }
 }
 

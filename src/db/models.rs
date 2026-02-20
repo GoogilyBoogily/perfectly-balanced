@@ -164,6 +164,15 @@ pub struct PlannedMoveDetail {
     pub target_disk_name: String,
 }
 
+/// Lightweight path info for a move — used by crash recovery to check filesystem state.
+#[derive(Debug, Clone)]
+pub struct MovePathInfo {
+    pub id: i64,
+    pub file_path: String,
+    pub source_mount: String,
+    pub target_mount: String,
+}
+
 /// Insert batch for scanning — lighter weight than FileEntry.
 #[derive(Debug, Clone)]
 pub struct FileInsert {

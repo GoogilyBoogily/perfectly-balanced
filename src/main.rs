@@ -1,7 +1,8 @@
 use anyhow::Result;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::signal;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 mod api;
 mod balancer;
@@ -38,15 +39,15 @@ async fn main() -> Result<()> {
     db.run_migrations()?;
     info!("Database initialized at {}", config.db_path);
 
+    // --- Startup recovery: fix stale states left by previous crash ---
+    let recovery = db.recover_stale_states()?;
+    if !recovery.recovered_move_ids.is_empty() {
+        executor::recovery::cleanup_partial_files(&db, &recovery.recovered_move_ids).await?;
+    }
+
     let event_hub = EventHub::new(256);
 
-    let state = Arc::new(AppState {
-        db,
-        config: config.clone(),
-        event_hub,
-        status: tokio::sync::RwLock::new(DaemonStatus::idle()),
-        cancel_flag: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-    });
+    let state = Arc::new(AppState::new(db, config.clone(), event_hub));
 
     let app = api::router(state.clone());
 
@@ -55,6 +56,29 @@ async fn main() -> Result<()> {
     info!("Listening on {}", bind_addr);
 
     axum::serve(listener, app).with_graceful_shutdown(shutdown_signal()).await?;
+
+    // --- Graceful shutdown: cancel operations, kill rsync, await background task ---
+    info!("Shutting down...");
+
+    // 1. Cancel any running operation
+    state.request_cancel().await;
+
+    // 2. Kill any running rsync child process
+    let rsync_child = state.rsync_child.lock().await.take();
+    if let Some(mut child) = rsync_child {
+        info!("Killing in-flight rsync child");
+        child.kill().await.ok();
+    }
+
+    // 3. Wait for background task with timeout
+    let bg_task = state.background_task.lock().await.take();
+    if let Some(handle) = bg_task {
+        match tokio::time::timeout(Duration::from_secs(10), handle).await {
+            Ok(Ok(())) => info!("Background task completed cleanly"),
+            Ok(Err(e)) => error!("Background task error: {:?}", e),
+            Err(_) => warn!("Background task did not finish within 10s, abandoning"),
+        }
+    }
 
     info!("Perfectly Balanced shut down cleanly");
     Ok(())

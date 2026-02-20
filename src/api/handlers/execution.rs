@@ -7,8 +7,10 @@ use axum::{
     response::IntoResponse,
     Json,
 };
-use std::sync::atomic::{AtomicBool, Ordering};
+use futures::FutureExt;
+use std::panic::AssertUnwindSafe;
 use std::sync::{Arc, LazyLock};
+use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 
 /// Pre-compiled regex for parsing rsync `--info=progress2` output.
@@ -23,7 +25,8 @@ struct RsyncJob<'a> {
     target_mount: &'a str,
     use_progress2: bool,
     event_hub: &'a EventHub,
-    cancel: &'a AtomicBool,
+    cancel: &'a CancellationToken,
+    rsync_child_slot: &'a tokio::sync::Mutex<Option<tokio::process::Child>>,
 }
 
 pub(crate) async fn execute_plan(
@@ -63,35 +66,54 @@ pub(crate) async fn execute_plan(
         ));
     }
 
-    state.reset_cancel();
+    let token = state.new_operation_token().await;
 
     *state.status.write().await = DaemonStatus::executing("Starting plan execution...");
 
     let state_clone = state.clone();
-    tokio::spawn(async move {
-        let event_hub = state_clone.event_hub.clone();
+    let handle = tokio::spawn(async move {
+        let result = AssertUnwindSafe(async {
+            match process_plan_moves(&state_clone, plan_id, &token).await {
+                Ok(()) => {
+                    info!("Plan {} execution task completed", plan_id);
+                }
+                Err(e) => {
+                    error!("Plan {} execution failed: {}", plan_id, e);
+                    let _ = state_clone.event_hub.publish(crate::events::Event::DaemonError {
+                        message: format!("Execution failed: {e}"),
+                    });
+                }
+            }
+        })
+        .catch_unwind()
+        .await;
 
-        match process_plan_moves(&state_clone, plan_id).await {
-            Ok(()) => {
-                info!("Plan {} execution task completed", plan_id);
-            }
-            Err(e) => {
-                error!("Plan {} execution failed: {}", plan_id, e);
-                let _ = event_hub.publish(crate::events::Event::DaemonError {
-                    message: format!("Execution failed: {e}"),
-                });
-            }
+        if result.is_err() {
+            error!("Plan {} execution panicked!", plan_id);
+            // Best-effort panic recovery
+            let _ = state_clone.db.update_plan_status(plan_id, PlanStatus::Failed);
+            let _ = state_clone.db.fail_in_progress_moves(plan_id);
+            let _ = state_clone.event_hub.publish(crate::events::Event::DaemonError {
+                message: format!("Execution panicked for plan {plan_id}"),
+            });
         }
 
+        // ALWAYS reset to idle — both normal and panic paths
         *state_clone.status.write().await = DaemonStatus::idle();
+        *state_clone.background_task.lock().await = None;
     });
+
+    *state.background_task.lock().await = Some(handle);
 
     Json(ApiResponse::ok("Execution started"))
 }
 
-async fn process_plan_moves(state: &Arc<AppState>, plan_id: i64) -> anyhow::Result<()> {
+async fn process_plan_moves(
+    state: &Arc<AppState>,
+    plan_id: i64,
+    cancel: &CancellationToken,
+) -> anyhow::Result<()> {
     let start = std::time::Instant::now();
-    let cancel = &state.cancel_flag;
 
     let disks = state.db.get_all_disks()?;
     let disk_map: std::collections::HashMap<i64, String> =
@@ -107,7 +129,7 @@ async fn process_plan_moves(state: &Arc<AppState>, plan_id: i64) -> anyhow::Resu
     let mut skipped = 0u32;
 
     for phase in 1..=max_phase {
-        if cancel.load(Ordering::Relaxed) {
+        if cancel.is_cancelled() {
             state.db.update_plan_status(plan_id, PlanStatus::Cancelled)?;
             return Ok(());
         }
@@ -115,7 +137,7 @@ async fn process_plan_moves(state: &Arc<AppState>, plan_id: i64) -> anyhow::Resu
         let moves = state.db.get_pending_moves_for_phase(plan_id, phase)?;
 
         for move_detail in &moves {
-            if cancel.load(Ordering::Relaxed) {
+            if cancel.is_cancelled() {
                 break;
             }
 
@@ -173,6 +195,7 @@ async fn process_plan_moves(state: &Arc<AppState>, plan_id: i64) -> anyhow::Resu
                 use_progress2,
                 event_hub: &state.event_hub,
                 cancel,
+                rsync_child_slot: &state.rsync_child,
             };
 
             match execute_single_rsync(&job).await {
@@ -187,7 +210,7 @@ async fn process_plan_moves(state: &Arc<AppState>, plan_id: i64) -> anyhow::Resu
                     });
                 }
                 Ok(false) => {
-                    if cancel.load(Ordering::Relaxed) {
+                    if cancel.is_cancelled() {
                         state.db.update_move_status(m.id, MoveStatus::Pending, None)?;
                     } else {
                         state.db.update_move_status(m.id, MoveStatus::Failed, Some("rsync failed"))?;
@@ -204,7 +227,7 @@ async fn process_plan_moves(state: &Arc<AppState>, plan_id: i64) -> anyhow::Resu
     }
 
     let duration = start.elapsed().as_secs_f64();
-    let status = if cancel.load(Ordering::Relaxed) { PlanStatus::Cancelled } else { PlanStatus::Completed };
+    let status = if cancel.is_cancelled() { PlanStatus::Cancelled } else { PlanStatus::Completed };
     state.db.update_plan_status(plan_id, status)?;
 
     let _ = state.event_hub.publish(crate::events::Event::ExecutionComplete {
@@ -245,13 +268,23 @@ async fn execute_single_rsync(job: &RsyncJob<'_>) -> anyhow::Result<bool> {
         .stderr(std::process::Stdio::piped())
         .spawn()?;
 
-    if let Some(stdout) = child.stdout.take() {
+    let stdout = child.stdout.take();
+
+    // Store child in the shared slot so shutdown can kill it
+    *job.rsync_child_slot.lock().await = Some(child);
+
+    if let Some(stdout) = stdout {
         let reader = tokio::io::BufReader::new(stdout);
         let mut lines = reader.lines();
 
         while let Ok(Some(line)) = lines.next_line().await {
-            if job.cancel.load(Ordering::Relaxed) {
-                child.kill().await.ok();
+            if job.cancel.is_cancelled() {
+                // Kill the child via the slot
+                let child = job.rsync_child_slot.lock().await.take();
+                if let Some(mut child) = child {
+                    child.kill().await.ok();
+                    child.wait().await.ok();
+                }
                 return Ok(false);
             }
             if let Some(caps) = PROGRESS_RE.captures(&line) {
@@ -269,16 +302,22 @@ async fn execute_single_rsync(job: &RsyncJob<'_>) -> anyhow::Result<bool> {
         }
     }
 
-    let exit = child.wait().await?;
-    Ok(exit.success())
+    // Take child back from slot and wait for it
+    let child = job.rsync_child_slot.lock().await.take();
+    if let Some(mut child) = child {
+        let exit = child.wait().await?;
+        Ok(exit.success())
+    } else {
+        // Child was already killed by shutdown — treat as cancelled
+        Ok(false)
+    }
 }
 
 pub(crate) async fn cancel_operation(
     State(state): State<Arc<AppState>>,
-    // plan_id is part of the route but cancellation uses a global flag
     Path(_plan_id): Path<i64>,
 ) -> impl IntoResponse {
-    state.request_cancel();
+    state.request_cancel().await;
     info!("Cancellation requested");
     Json(ApiResponse::ok("Cancellation requested"))
 }

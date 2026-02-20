@@ -11,7 +11,7 @@ use anyhow::{Context, Result};
 use rusqlite::Connection;
 use std::path::Path;
 use std::sync::Mutex;
-use tracing::info;
+use tracing::{info, warn};
 
 /// Thread-safe wrapper around a SQLite connection.
 ///
@@ -99,4 +99,55 @@ impl Database {
     pub fn conn(&self) -> std::sync::MutexGuard<'_, Connection> {
         self.conn.lock().unwrap()
     }
+
+    /// Recover stale states left behind by a crash or kill.
+    ///
+    /// In a single transaction:
+    /// 1. Collect IDs of moves stuck at `in_progress` (for later filesystem cleanup)
+    /// 2. Mark any `executing` plans as `failed`
+    /// 3. Reset `in_progress` moves back to `pending`
+    pub(crate) fn recover_stale_states(&self) -> Result<RecoveryStats> {
+        let conn = self.conn();
+        let tx = conn.unchecked_transaction()?;
+
+        // Collect in_progress move IDs before resetting them
+        let mut stmt =
+            tx.prepare("SELECT id FROM planned_moves WHERE status = 'in_progress'")?;
+        let recovered_move_ids: Vec<i64> = stmt
+            .query_map([], |row| row.get(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        drop(stmt);
+
+        let plans_failed = tx.execute(
+            "UPDATE balance_plans SET status = 'failed' WHERE status = 'executing'",
+            [],
+        )?;
+
+        let moves_reset = tx.execute(
+            "UPDATE planned_moves SET status = 'pending', error_message = NULL \
+             WHERE status = 'in_progress'",
+            [],
+        )?;
+
+        tx.commit()?;
+
+        if plans_failed > 0 || moves_reset > 0 {
+            warn!(
+                "Startup recovery: {} plan(s) marked failed, {} move(s) reset",
+                plans_failed, moves_reset
+            );
+        }
+
+        Ok(RecoveryStats { plans_failed, moves_reset, recovered_move_ids })
+    }
+}
+
+/// Stats returned by startup recovery.
+pub(crate) struct RecoveryStats {
+    #[allow(dead_code)]
+    pub plans_failed: usize,
+    #[allow(dead_code)]
+    pub moves_reset: usize,
+    /// IDs of moves that were `in_progress` at crash time — need filesystem cleanup.
+    pub recovered_move_ids: Vec<i64>,
 }
