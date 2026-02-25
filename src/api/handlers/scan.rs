@@ -3,6 +3,7 @@ use crate::{scanner, AppState, DaemonState, DaemonStatus};
 use axum::{extract::State, response::IntoResponse, Json};
 use std::collections::HashMap;
 use std::panic::AssertUnwindSafe;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
@@ -95,6 +96,12 @@ fn scan_discovered_disks(
     let start = std::time::Instant::now();
     let mount_table = parse_mount_table();
 
+    // Compute the catalog DB's parent directory so the scanner can skip it.
+    // This prevents the DB files (catalog.db, -wal, -shm) from being cataloged
+    // when the user places the catalog on a scanned disk (e.g. /mnt/cache/).
+    let exclude_dir: Option<PathBuf> =
+        std::path::Path::new(&state.config.db_path).parent().map(PathBuf::from);
+
     for disk in discovered {
         let space = match scanner::get_disk_space(&disk.mount_path) {
             Ok(s) => s,
@@ -149,6 +156,7 @@ fn scan_discovered_disks(
             event_hub: &state.event_hub,
             cancel: cancel.clone(),
             num_threads: threads,
+            exclude_dir: exclude_dir.as_deref(),
         };
         match scanner::scan_disk(&ctx) {
             Ok(stats) => {

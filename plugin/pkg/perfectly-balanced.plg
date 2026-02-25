@@ -77,6 +77,7 @@ MAX_TOLERANCE="0.15"
 MIN_FREE_HEADROOM="1073741824"
 EXCLUDED_DISKS=""
 WARN_PARITY_CHECK="yes"
+CATALOG_PATH=""
 CFGEOF
 fi
 </INLINE>
@@ -97,6 +98,7 @@ MAX_TOLERANCE="0.15"
 MIN_FREE_HEADROOM="1073741824"
 EXCLUDED_DISKS=""
 WARN_PARITY_CHECK="yes"
+CATALOG_PATH=""
 ]]>
 </INLINE>
 </FILE>
@@ -133,11 +135,14 @@ removepkg &name;-&version;-x86_64-1 2>/dev/null
 # Remove runtime files
 rm -rf &plugdir;
 
-# Remove cached package (but keep config and database)
+# Remove cached package (but keep config)
 rm -f &cfgdir;/&name;-*-x86_64-1.txz
 
+# Clean up ephemeral catalog if it exists
+rm -rf /tmp/perfectly-balanced
+
 echo "Perfectly Balanced removed."
-echo "Note: Configuration and database preserved at &cfgdir;/"
+echo "Note: Configuration preserved at &cfgdir;/"
 echo "To remove completely: rm -rf &cfgdir;"
 </INLINE>
 </FILE>

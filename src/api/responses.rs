@@ -43,6 +43,8 @@ pub(crate) struct SettingsUpdateRequest {
     pub min_free_headroom: Option<u64>,
     pub excluded_disks: Option<Vec<String>>,
     pub warn_parity_check: Option<bool>,
+    /// Custom catalog DB path. Empty string = use default (tmpfs).
+    pub catalog_path: Option<String>,
 }
 
 /// Scan progress summary returned by status endpoint.

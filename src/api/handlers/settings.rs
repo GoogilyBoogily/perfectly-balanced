@@ -31,6 +31,13 @@ pub(crate) async fn update_settings(
     if let Some(v) = req.warn_parity_check {
         config.warn_parity_check = v;
     }
+    if let Some(v) = req.catalog_path {
+        if v.is_empty() {
+            config.db_path = crate::config::defaults::DEFAULT_DB_PATH.to_string();
+        } else {
+            config.db_path = v;
+        }
+    }
 
     if let Err(e) = config.validate() {
         return Json(ApiResponse::<&str>::err(format!("Invalid settings: {e}")));

@@ -22,6 +22,8 @@ pub(crate) struct ScanContext<'a> {
     pub event_hub: &'a EventHub,
     pub cancel: CancellationToken,
     pub num_threads: usize,
+    /// Directory to exclude from scanning (e.g. the catalog DB's parent dir).
+    pub exclude_dir: Option<&'a Path>,
 }
 
 /// Statistics from scanning a single disk.
@@ -75,11 +77,19 @@ fn process_dir_entry(
     mount: &Path,
     mount_path: &str,
     disk_id: i64,
+    exclude_dir: Option<&Path>,
 ) -> Option<FileInsert> {
     let entry_path = entry.path();
 
     if entry_path == mount {
         return None;
+    }
+
+    // Skip entries inside the excluded directory (e.g. the catalog DB dir).
+    if let Some(excl) = exclude_dir {
+        if entry_path.starts_with(excl) {
+            return None;
+        }
     }
 
     let path_str = entry_path.to_string_lossy();
@@ -159,7 +169,9 @@ fn run_walk(ctx: &ScanContext<'_>, disk_name: &str) -> Result<ScanStats> {
             }
         };
 
-        let Some(insert) = process_dir_entry(&entry, mount, ctx.mount_path, ctx.disk_id) else {
+        let Some(insert) =
+            process_dir_entry(&entry, mount, ctx.mount_path, ctx.disk_id, ctx.exclude_dir)
+        else {
             continue;
         };
 

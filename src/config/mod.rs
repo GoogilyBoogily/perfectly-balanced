@@ -1,4 +1,4 @@
-mod defaults;
+pub(crate) mod defaults;
 mod parser;
 pub(crate) mod settings;
 mod validation;

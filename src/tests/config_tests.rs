@@ -24,3 +24,24 @@ fn test_default_config_validates() {
     let config = AppConfig::default();
     assert!(config.validate().is_ok());
 }
+
+#[test]
+fn test_catalog_path_default_is_tmpfs() {
+    let config = AppConfig::default();
+    assert!(config.db_path.starts_with("/tmp/"), "Default db_path should be in /tmp");
+}
+
+#[test]
+fn test_catalog_path_override() {
+    let mut config = AppConfig::default();
+    config.parse_ini(r#"CATALOG_PATH="/mnt/cache/appdata/perfectly-balanced/catalog.db""#);
+    assert_eq!(config.db_path, "/mnt/cache/appdata/perfectly-balanced/catalog.db");
+}
+
+#[test]
+fn test_catalog_path_empty_keeps_default() {
+    let mut config = AppConfig::default();
+    let default_path = config.db_path.clone();
+    config.parse_ini(r#"CATALOG_PATH="""#);
+    assert_eq!(config.db_path, default_path);
+}

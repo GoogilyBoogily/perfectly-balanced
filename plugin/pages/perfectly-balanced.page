@@ -801,6 +801,39 @@ function buildSettingsForm(s) {
     parityCheck.checked = s.warn_parity_check;
     addRow('Warn on Parity Check', parityCheck);
 
+    // Catalog location: ephemeral (RAM) vs persistent (custom path)
+    const isCustom = s.db_path && !s.db_path.startsWith('/tmp/');
+    const catalogWrap = document.createElement('div');
+
+    const catalogSelect = document.createElement('select');
+    catalogSelect.id = 'set-catalog-mode';
+    const optTmp = document.createElement('option');
+    optTmp.value = 'tmp'; optTmp.textContent = 'Temporary (RAM) — fresh scan each reboot';
+    const optCustom = document.createElement('option');
+    optCustom.value = 'custom'; optCustom.textContent = 'Persistent (custom path on cache)';
+    catalogSelect.appendChild(optTmp);
+    catalogSelect.appendChild(optCustom);
+    if (isCustom) catalogSelect.value = 'custom';
+    catalogWrap.appendChild(catalogSelect);
+
+    const catalogInput = document.createElement('input');
+    catalogInput.type = 'text'; catalogInput.id = 'set-catalog-path';
+    catalogInput.placeholder = '/mnt/cache/appdata/perfectly-balanced/catalog.db';
+    catalogInput.value = isCustom ? s.db_path : '';
+    catalogInput.style.cssText = 'width:100%;margin-top:6px;display:' + (isCustom ? 'block' : 'none');
+    catalogWrap.appendChild(catalogInput);
+
+    catalogSelect.addEventListener('change', () => {
+        catalogInput.style.display = catalogSelect.value === 'custom' ? 'block' : 'none';
+    });
+
+    const catalogNote = document.createElement('div');
+    catalogNote.style.cssText = 'font-size:11px;color:var(--text-color,#999);margin-top:4px';
+    catalogNote.textContent = 'Restart required to apply. Persistent path is excluded from scans.';
+    catalogWrap.appendChild(catalogNote);
+
+    addRow('Catalog Location', catalogWrap);
+
     form.appendChild(table);
 
     const btnRow = document.createElement('div');
@@ -830,12 +863,24 @@ async function loadSettings() {
 }
 
 async function saveSettings() {
+    const catalogMode = document.getElementById('set-catalog-mode').value;
+    const catalogPath = catalogMode === 'custom'
+        ? document.getElementById('set-catalog-path').value.trim()
+        : '';
+
+    if (catalogMode === 'custom' && !catalogPath) {
+        document.getElementById('settings-msg').style.color = 'var(--pb-red)';
+        document.getElementById('settings-msg').textContent = 'Please enter a catalog path or switch to Temporary.';
+        return;
+    }
+
     const body = {
         scan_threads: parseInt(document.getElementById('set-threads').value),
         slider_alpha: parseInt(document.getElementById('set-alpha').value) / 100,
         max_tolerance: parseInt(document.getElementById('set-tolerance').value) / 100,
         min_free_headroom: Math.round(parseFloat(document.getElementById('set-headroom').value) * 1024 * 1024 * 1024),
         warn_parity_check: document.getElementById('set-parity').checked,
+        catalog_path: catalogPath,
     };
     const msg = document.getElementById('settings-msg');
     const res = await apiCall('/api/settings', { method: 'POST', body: JSON.stringify(body) });

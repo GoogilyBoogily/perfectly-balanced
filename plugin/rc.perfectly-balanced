@@ -29,7 +29,8 @@ start() {
     mkdir -p "$CFG_DIR"
 
     export PB_CONFIG_PATH="${CFG_DIR}/perfectly-balanced.cfg"
-    export PB_DB_PATH="${CFG_DIR}/catalog.db"
+    # DB path is determined by the daemon from CATALOG_PATH in the config file.
+    # Defaults to /tmp/perfectly-balanced/catalog.db (RAM) to avoid USB wear.
     export RUST_LOG="perfectly_balanced=info"
 
     echo "Starting Perfectly Balanced daemon..."

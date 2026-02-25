@@ -52,6 +52,11 @@ impl AppConfig {
                     "WARN_PARITY_CHECK" => {
                         self.warn_parity_check = value == "yes" || value == "true" || value == "1";
                     }
+                    "CATALOG_PATH" => {
+                        if !value.is_empty() {
+                            self.db_path = value.to_string();
+                        }
+                    }
                     _ => {} // Ignore unknown keys
                 }
             }
@@ -60,7 +65,12 @@ impl AppConfig {
 
     /// Save current config back to the Unraid INI file.
     pub fn save(&self) -> Result<()> {
+        use super::defaults::DEFAULT_DB_PATH;
+
         let excluded = self.excluded_disks.iter().cloned().collect::<Vec<_>>().join(",");
+
+        // Write CATALOG_PATH only when the user has set a custom (non-default) location.
+        let catalog_path = if self.db_path == DEFAULT_DB_PATH { "" } else { &self.db_path };
 
         let contents = format!(
             r#"# Perfectly Balanced configuration
@@ -72,6 +82,7 @@ MAX_TOLERANCE="{}"
 MIN_FREE_HEADROOM="{}"
 EXCLUDED_DISKS="{}"
 WARN_PARITY_CHECK="{}"
+CATALOG_PATH="{}"
 "#,
             self.port,
             self.scan_threads,
@@ -80,6 +91,7 @@ WARN_PARITY_CHECK="{}"
             self.min_free_headroom,
             excluded,
             if self.warn_parity_check { "yes" } else { "no" },
+            catalog_path,
         );
 
         if let Some(parent) = Path::new(&self.config_path).parent() {
