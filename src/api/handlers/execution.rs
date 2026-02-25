@@ -14,6 +14,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 
 /// Pre-compiled regex for parsing rsync `--info=progress2` output.
+#[allow(clippy::unwrap_used)] // Compile-time constant regex, provably valid
 static PROGRESS_RE: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"(\d+)%\s+([\d.]+\w+/s)?\s*([\d:]+)?").unwrap());
 
@@ -81,7 +82,7 @@ pub(crate) async fn execute_plan(
 
     let token = state.new_operation_token().await;
 
-    let state_clone = state.clone();
+    let state_clone = Arc::clone(&state);
     let handle = tokio::spawn(async move {
         let result = AssertUnwindSafe(async {
             match process_plan_moves(&state_clone, plan_id, &token).await {
@@ -309,17 +310,17 @@ async fn execute_single_rsync(job: &RsyncJob<'_>) -> anyhow::Result<()> {
     args.push(&source);
     args.push(&target);
 
-    let mut child = tokio::process::Command::new("rsync")
+    let mut rsync_proc = tokio::process::Command::new("rsync")
         .args(&args)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()?;
 
-    let stdout = child.stdout.take();
-    let stderr = child.stderr.take();
+    let stdout = rsync_proc.stdout.take();
+    let stderr = rsync_proc.stderr.take();
 
     // Store child in the shared slot so shutdown can kill it
-    *job.rsync_child_slot.lock().await = Some(child);
+    *job.rsync_child_slot.lock().await = Some(rsync_proc);
 
     // Drain stderr in background to prevent pipe buffer deadlock.
     // We read_to_string() to fully consume stderr — a single read() could leave

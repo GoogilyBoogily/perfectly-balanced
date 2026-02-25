@@ -12,5 +12,5 @@ fn test_open_and_migrate() {
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(count, 1);
+    assert_eq!(count, 1, "disks table should exist after migration");
 }

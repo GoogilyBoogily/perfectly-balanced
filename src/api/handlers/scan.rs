@@ -26,7 +26,7 @@ pub(crate) async fn start_scan(
 
     let threads = req.threads.unwrap_or(state.config.scan_threads).clamp(1, 32);
     let token = state.new_operation_token().await;
-    let state_clone = state.clone();
+    let state_clone = Arc::clone(&state);
 
     let handle = tokio::task::spawn_blocking(move || {
         let rt = tokio::runtime::Handle::current();

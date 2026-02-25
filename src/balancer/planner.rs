@@ -243,7 +243,7 @@ fn find_best_target(
     min_free_headroom: u64,
 ) -> Option<usize> {
     let mut best_target: Option<usize> = None;
-    let mut best_remaining: i64 = i64::MIN;
+    let mut best_remaining = i64::MIN;
 
     for (i, ds) in disk_states.iter().enumerate() {
         if ds.disk.id == file.disk_id {

@@ -11,18 +11,18 @@ EXCLUDED_DISKS="disk3,cache"
 WARN_PARITY_CHECK="yes"
 "#;
     config.parse_ini(ini);
-    assert_eq!(config.port, 7092);
-    assert_eq!(config.scan_threads, 4);
-    assert!((config.slider_alpha - 0.75).abs() < f64::EPSILON);
-    assert!(config.excluded_disks.contains("disk3"));
-    assert!(config.excluded_disks.contains("cache"));
-    assert!(config.warn_parity_check);
+    assert_eq!(config.port, 7092, "PORT should be parsed from INI");
+    assert_eq!(config.scan_threads, 4, "SCAN_THREADS should be parsed from INI");
+    assert!((config.slider_alpha - 0.75).abs() < f64::EPSILON, "SLIDER_ALPHA should be 0.75");
+    assert!(config.excluded_disks.contains("disk3"), "disk3 should be in excluded disks");
+    assert!(config.excluded_disks.contains("cache"), "cache should be in excluded disks");
+    assert!(config.warn_parity_check, "WARN_PARITY_CHECK should be true");
 }
 
 #[test]
 fn test_default_config_validates() {
     let config = AppConfig::default();
-    assert!(config.validate().is_ok());
+    assert!(config.validate().is_ok(), "default config should pass validation");
 }
 
 #[test]

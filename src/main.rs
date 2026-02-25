@@ -49,7 +49,7 @@ async fn main() -> Result<()> {
 
     let state = Arc::new(AppState::new(db, config.clone(), event_hub));
 
-    let app = api::router(state.clone());
+    let app = api::router(Arc::clone(&state));
 
     let bind_addr = format!("127.0.0.1:{}", config.port);
     let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
@@ -87,6 +87,7 @@ async fn main() -> Result<()> {
 }
 
 /// Wait for SIGTERM or SIGINT for graceful shutdown.
+#[allow(clippy::expect_used)] // Signal handlers are bootstrap code; panic is correct failure mode
 async fn shutdown_signal() {
     let ctrl_c = async {
         signal::ctrl_c().await.expect("failed to install Ctrl+C handler");
