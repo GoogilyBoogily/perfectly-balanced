@@ -1,8 +1,9 @@
 #!/bin/bash
 # Build and package the Perfectly Balanced plugin for Unraid
 set -euo pipefail
+REPO_DIR="$(pwd)"
 
-VERSION="${1:-$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')}"
+VERSION="${1:-$(grep 'ENTITY version' plugin/pkg/perfectly-balanced.plg | sed 's/.*"\(.*\)".*/\1/')}"
 PLUGIN="perfectly-balanced"
 ARCH="x86_64"
 BUILD_DIR="$(mktemp -d)"
@@ -12,10 +13,13 @@ echo "=== Building Perfectly Balanced v${VERSION} ==="
 
 # Step 1: Build the Rust binary for musl target
 echo "Building Rust binary..."
-cross build --release --target x86_64-unknown-linux-musl 2>/dev/null || {
-    echo "Note: 'cross' not found or build failed, trying native cargo..."
+if command -v cross &>/dev/null; then
+    echo "Using 'cross' for musl cross-compilation..."
+    cross build --release --target x86_64-unknown-linux-musl
+else
+    echo "Note: 'cross' not found, trying native cargo..."
     cargo build --release --target x86_64-unknown-linux-musl
-}
+fi
 
 BINARY="target/x86_64-unknown-linux-musl/release/${PLUGIN}"
 if [ ! -f "$BINARY" ]; then
@@ -62,7 +66,7 @@ EOF
 # Step 3: Create the .txz package
 echo "Creating Slackware package..."
 cd "$BUILD_DIR"
-OUTPUT_DIR="$(cd - > /dev/null && pwd)/packaging"
+OUTPUT_DIR="${REPO_DIR}/packaging"
 mkdir -p "$OUTPUT_DIR"
 
 # Use makepkg if available, otherwise tar+xz
@@ -72,7 +76,7 @@ else
     tar cJf "${OUTPUT_DIR}/${PKG_NAME}.txz" .
 fi
 
-cd - > /dev/null
+cd "$REPO_DIR"
 
 # Cleanup
 rm -rf "$BUILD_DIR"

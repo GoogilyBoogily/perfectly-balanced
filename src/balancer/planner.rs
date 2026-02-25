@@ -220,7 +220,10 @@ fn assign_moves(
 
             disk_states[src_idx].sim_used =
                 disk_states[src_idx].sim_used.saturating_sub(file.size_bytes);
-            disk_states[tgt_idx].sim_used += file.size_bytes;
+            disk_states[tgt_idx].sim_used = disk_states[tgt_idx]
+                .sim_used
+                .saturating_add(file.size_bytes)
+                .min(disk_states[tgt_idx].disk.total_bytes);
             total_bytes_to_move += file.size_bytes;
         }
 

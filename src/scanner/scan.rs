@@ -1,5 +1,5 @@
 use super::validation::validate_path;
-use crate::db::{Database, FileInsert};
+use crate::db::FileInsert;
 use crate::events::{Event, EventHub};
 use anyhow::{bail, Result};
 use jwalk::{Parallelism, WalkDir};
@@ -8,15 +8,12 @@ use std::time::Instant;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
-/// Batch size for SQLite inserts during scanning.
-const INSERT_BATCH_SIZE: usize = 2000;
-
 /// Minimum interval between SSE progress updates (milliseconds).
 const PROGRESS_INTERVAL_MS: u64 = 500;
 
 /// All context needed to scan a single disk.
 pub(crate) struct ScanContext<'a> {
-    pub db: &'a Database,
+    pub db: &'a crate::db::Database,
     pub disk_id: i64,
     pub mount_path: &'a str,
     pub event_hub: &'a EventHub,
@@ -30,6 +27,13 @@ pub(crate) struct ScanContext<'a> {
 pub(crate) struct ScanStats {
     pub files_scanned: u64,
     pub bytes_cataloged: u64,
+}
+
+/// Internal result from the walk phase (before DB insertion).
+struct WalkResult {
+    files_scanned: u64,
+    bytes_cataloged: u64,
+    files: Vec<FileInsert>,
 }
 
 /// Scan a single disk's filesystem and populate the database.
@@ -53,22 +57,23 @@ pub(crate) fn scan_disk(ctx: &ScanContext<'_>) -> Result<ScanStats> {
 
     info!("Starting scan of {} (disk_id={})", ctx.mount_path, ctx.disk_id);
 
-    ctx.db.begin_disk_scan(ctx.disk_id)?;
+    let stats = run_walk(ctx, &disk_name)?;
 
-    let result = run_walk(ctx, &disk_name);
+    // Atomic: clear + insert all + recompute folder sizes in one transaction
+    ctx.db.atomic_disk_scan(ctx.disk_id, &stats.files)?;
 
-    match &result {
-        Ok(_) => {
-            ctx.db.commit_disk_scan(ctx.disk_id)?;
-        }
-        Err(_) => {
-            if let Err(rb_err) = ctx.db.rollback_disk_scan() {
-                error!("Failed to rollback scan transaction: {}", rb_err);
-            }
-        }
-    }
+    info!(
+        "Scan complete for {}: {} files, {} bytes",
+        ctx.mount_path, stats.files_scanned, stats.bytes_cataloged
+    );
 
-    result
+    let _ = ctx.event_hub.publish(Event::ScanDiskComplete {
+        disk: disk_name,
+        total_files: stats.files_scanned,
+        total_bytes: stats.bytes_cataloged,
+    });
+
+    Ok(ScanStats { files_scanned: stats.files_scanned, bytes_cataloged: stats.bytes_cataloged })
 }
 
 /// Convert a jwalk directory entry into a `FileInsert`, or `None` if it should be skipped.
@@ -138,14 +143,14 @@ fn process_dir_entry(
     })
 }
 
-fn run_walk(ctx: &ScanContext<'_>, disk_name: &str) -> Result<ScanStats> {
+fn run_walk(ctx: &ScanContext<'_>, disk_name: &str) -> Result<WalkResult> {
     let mut files_scanned = 0u64;
     let mut bytes_cataloged = 0u64;
     let start = Instant::now();
     let mut last_progress = Instant::now();
     let mount = Path::new(ctx.mount_path);
 
-    let mut batch: Vec<FileInsert> = Vec::with_capacity(INSERT_BATCH_SIZE);
+    let mut all_files: Vec<FileInsert> = Vec::new();
 
     let parallelism = if ctx.num_threads > 1 {
         Parallelism::RayonNewPool(ctx.num_threads)
@@ -180,12 +185,7 @@ fn run_walk(ctx: &ScanContext<'_>, disk_name: &str) -> Result<ScanStats> {
             bytes_cataloged += insert.size_bytes;
         }
 
-        batch.push(insert);
-
-        if batch.len() >= INSERT_BATCH_SIZE {
-            ctx.db.insert_files_batch(&batch)?;
-            batch.clear();
-        }
+        all_files.push(insert);
 
         if last_progress.elapsed().as_millis() >= u128::from(PROGRESS_INTERVAL_MS) {
             let _ = ctx.event_hub.publish(Event::ScanProgress {
@@ -198,22 +198,11 @@ fn run_walk(ctx: &ScanContext<'_>, disk_name: &str) -> Result<ScanStats> {
         }
     }
 
-    if !batch.is_empty() {
-        ctx.db.insert_files_batch(&batch)?;
-    }
-
     let duration = start.elapsed().as_secs_f64();
-
     info!(
-        "Scan complete for {}: {} files, {} bytes in {:.1}s",
+        "Walk complete for {}: {} files, {} bytes in {:.1}s (inserting...)",
         ctx.mount_path, files_scanned, bytes_cataloged, duration
     );
 
-    let _ = ctx.event_hub.publish(Event::ScanDiskComplete {
-        disk: disk_name.to_string(),
-        total_files: files_scanned,
-        total_bytes: bytes_cataloged,
-    });
-
-    Ok(ScanStats { files_scanned, bytes_cataloged })
+    Ok(WalkResult { files_scanned, bytes_cataloged, files: all_files })
 }

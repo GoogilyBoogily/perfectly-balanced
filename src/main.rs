@@ -67,7 +67,9 @@ async fn main() -> Result<()> {
     let rsync_child = state.rsync_child.lock().await.take();
     if let Some(mut child) = rsync_child {
         info!("Killing in-flight rsync child");
-        child.kill().await.ok();
+        if let Err(e) = child.kill().await {
+            warn!("Failed to kill rsync child: {}", e);
+        }
     }
 
     // 3. Wait for background task with timeout

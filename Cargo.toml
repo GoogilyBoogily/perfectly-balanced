@@ -93,4 +93,4 @@ significant_drop_tightening = "allow"
 strip = true
 lto = true
 codegen-units = 1
-opt-level = "s"
+opt-level = 3

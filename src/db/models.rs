@@ -169,6 +169,7 @@ pub struct PlannedMoveDetail {
 pub struct MovePathInfo {
     pub id: i64,
     pub file_path: String,
+    pub file_size: i64,
     pub source_mount: String,
     pub target_mount: String,
 }

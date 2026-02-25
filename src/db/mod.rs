@@ -65,7 +65,7 @@ impl Database {
 
     /// Run database migrations.
     pub fn run_migrations(&self) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn()?;
 
         let has_schema_table: bool = conn
             .query_row(
@@ -96,8 +96,10 @@ impl Database {
     }
 
     /// Get a lock on the database connection for executing queries.
-    pub fn conn(&self) -> std::sync::MutexGuard<'_, Connection> {
-        self.conn.lock().unwrap()
+    pub fn conn(&self) -> anyhow::Result<std::sync::MutexGuard<'_, Connection>> {
+        self.conn.lock().map_err(|e| {
+            anyhow::anyhow!("Database mutex poisoned (a previous operation panicked): {e}")
+        })
     }
 
     /// Recover stale states left behind by a crash or kill.
@@ -107,7 +109,7 @@ impl Database {
     /// 2. Mark any `executing` plans as `failed`
     /// 3. Reset `in_progress` moves back to `pending`
     pub(crate) fn recover_stale_states(&self) -> Result<RecoveryStats> {
-        let conn = self.conn();
+        let conn = self.conn()?;
         let tx = conn.unchecked_transaction()?;
 
         // Collect in_progress move IDs before resetting them

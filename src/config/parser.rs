@@ -2,6 +2,7 @@ use super::settings::AppConfig;
 use anyhow::{Context, Result};
 use std::fs;
 use std::path::Path;
+use tracing::warn;
 
 impl AppConfig {
     /// Parse Unraid's simple KEY="VALUE" config format.
@@ -17,31 +18,26 @@ impl AppConfig {
                 let value = value.trim().trim_matches('"');
 
                 match key {
-                    "PORT" => {
-                        if let Ok(v) = value.parse() {
-                            self.port = v;
-                        }
-                    }
-                    "SCAN_THREADS" => {
-                        if let Ok(v) = value.parse() {
-                            self.scan_threads = v;
-                        }
-                    }
-                    "SLIDER_ALPHA" => {
-                        if let Ok(v) = value.parse() {
-                            self.slider_alpha = v;
-                        }
-                    }
-                    "MAX_TOLERANCE" => {
-                        if let Ok(v) = value.parse() {
-                            self.max_tolerance = v;
-                        }
-                    }
-                    "MIN_FREE_HEADROOM" => {
-                        if let Ok(v) = value.parse() {
-                            self.min_free_headroom = v;
-                        }
-                    }
+                    "PORT" => match value.parse() {
+                        Ok(v) => self.port = v,
+                        Err(e) => warn!("Invalid PORT value '{}': {}", value, e),
+                    },
+                    "SCAN_THREADS" => match value.parse() {
+                        Ok(v) => self.scan_threads = v,
+                        Err(e) => warn!("Invalid SCAN_THREADS value '{}': {}", value, e),
+                    },
+                    "SLIDER_ALPHA" => match value.parse() {
+                        Ok(v) => self.slider_alpha = v,
+                        Err(e) => warn!("Invalid SLIDER_ALPHA value '{}': {}", value, e),
+                    },
+                    "MAX_TOLERANCE" => match value.parse() {
+                        Ok(v) => self.max_tolerance = v,
+                        Err(e) => warn!("Invalid MAX_TOLERANCE value '{}': {}", value, e),
+                    },
+                    "MIN_FREE_HEADROOM" => match value.parse() {
+                        Ok(v) => self.min_free_headroom = v,
+                        Err(e) => warn!("Invalid MIN_FREE_HEADROOM value '{}': {}", value, e),
+                    },
                     "EXCLUDED_DISKS" => {
                         self.excluded_disks = value
                             .split(',')

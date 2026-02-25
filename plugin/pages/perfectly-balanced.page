@@ -6,7 +6,8 @@ Tag="balance-scale"
 <?php
 $plugin = "perfectly-balanced";
 $cfg = parse_plugin_cfg($plugin);
-$port = $cfg['PORT'] ?? '7091';
+$port = intval($cfg['PORT'] ?? 7091);
+if ($port < 1 || $port > 65535) $port = 7091;
 $api_base = "http://127.0.0.1:{$port}";
 ?>
 
@@ -366,10 +367,10 @@ document.querySelectorAll('.pb-tab').forEach(tab => {
 // ── Utility Functions ───────────────────────────────────────────────
 
 function formatBytes(bytes) {
-    if (bytes === 0) return '0 B';
+    if (!bytes || bytes <= 0) return '0 B';
     const k = 1024;
     const sizes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    const i = Math.min(Math.floor(Math.log(bytes) / Math.log(k)), sizes.length - 1);
     return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
 }
 
@@ -394,6 +395,14 @@ async function apiCall(path, opts = {}) {
             headers: { 'Content-Type': 'application/json' },
             ...opts,
         });
+        if (!res.ok) {
+            // Try to parse JSON error, fall back to HTTP status text
+            try {
+                return await res.json();
+            } catch {
+                return { success: false, error: `HTTP ${res.status}: ${res.statusText}` };
+            }
+        }
         return await res.json();
     } catch (e) {
         console.error('API call failed:', path, e);
@@ -403,34 +412,80 @@ async function apiCall(path, opts = {}) {
 
 // ── SSE Connection ──────────────────────────────────────────────────
 
+let sseRetryDelay = 1000;
+
+function parseSSE(e) {
+    try {
+        return JSON.parse(e.data).data;
+    } catch (err) {
+        console.error('SSE parse error:', err, e.data);
+        return null;
+    }
+}
+
+async function syncDaemonState() {
+    const res = await apiCall('/api/status');
+    if (res.success && res.data) {
+        const s = res.data;
+        if (s.state === 'idle') {
+            if (isExecuting) {
+                isExecuting = false;
+                document.getElementById('btn-execute').disabled = false;
+                document.getElementById('btn-cancel').style.display = 'none';
+            }
+            const scanBtn = document.getElementById('btn-scan');
+            if (scanBtn) scanBtn.disabled = false;
+            document.getElementById('btn-plan').disabled = false;
+        } else if (s.state === 'executing') {
+            isExecuting = true;
+            document.getElementById('btn-execute').disabled = true;
+            document.getElementById('btn-cancel').style.display = 'inline-block';
+            document.getElementById('btn-scan').disabled = true;
+            document.getElementById('btn-plan').disabled = true;
+            document.getElementById('execution-progress').style.display = 'block';
+            const execStatus = document.getElementById('exec-status');
+            if (execStatus && s.message) execStatus.textContent = s.message;
+        } else if (s.state === 'scanning') {
+            document.getElementById('btn-scan').disabled = true;
+            document.getElementById('btn-plan').disabled = true;
+            document.getElementById('scan-progress').style.display = 'block';
+        }
+    }
+}
+
 function connectSSE() {
     if (eventSource) eventSource.close();
     eventSource = new EventSource(API + '/api/events');
 
     eventSource.addEventListener('scan_progress', (e) => {
-        const d = JSON.parse(e.data).data;
+        const d = parseSSE(e);
+        if (!d) return;
         logLine('scan-log', `[${d.disk}] ${d.files_scanned} files, ${formatBytes(d.bytes_cataloged)}`);
     });
 
     eventSource.addEventListener('scan_disk_complete', (e) => {
-        const d = JSON.parse(e.data).data;
+        const d = parseSSE(e);
+        if (!d) return;
         logLine('scan-log', `✓ ${d.disk} complete: ${d.total_files} files, ${formatBytes(d.total_bytes)}`);
     });
 
     eventSource.addEventListener('scan_complete', (e) => {
-        const d = JSON.parse(e.data).data;
+        const d = parseSSE(e);
+        if (!d) return;
         logLine('scan-log', `✓ Scan complete: ${d.total_disks} disks, ${d.total_files} files in ${d.duration_seconds.toFixed(1)}s`);
         document.getElementById('btn-scan').disabled = false;
         loadDisks();
     });
 
     eventSource.addEventListener('plan_ready', (e) => {
-        const d = JSON.parse(e.data).data;
+        const d = parseSSE(e);
+        if (!d) return;
         logLine('exec-log', `Plan ready: ${d.total_moves} moves, ${formatBytes(d.total_bytes)}`);
     });
 
     eventSource.addEventListener('move_progress', (e) => {
-        const d = JSON.parse(e.data).data;
+        const d = parseSSE(e);
+        if (!d) return;
         const bar = document.getElementById('exec-bar');
         if (bar) bar.style.width = d.percent + '%';
         const status = document.getElementById('exec-status');
@@ -438,19 +493,21 @@ function connectSSE() {
     });
 
     eventSource.addEventListener('move_complete', (e) => {
-        const d = JSON.parse(e.data).data;
+        const d = parseSSE(e);
+        if (!d) return;
+        const normalized = d.status === 'success' ? 'completed' : d.status;
         const icon = d.status === 'success' ? '✓' : '✗';
-        logLine('exec-log', `${icon} Move #${d.move_id}: ${d.status}`);
-        // Update status badge in table
+        logLine('exec-log', `${icon} Move #${d.move_id}: ${normalized}`);
         const badge = document.getElementById('move-status-' + d.move_id);
         if (badge) {
-            badge.className = 'pb-status-badge pb-status-' + d.status.replace('success','completed');
-            badge.textContent = d.status;
+            badge.className = 'pb-status-badge pb-status-' + normalized;
+            badge.textContent = normalized;
         }
     });
 
     eventSource.addEventListener('execution_complete', (e) => {
-        const d = JSON.parse(e.data).data;
+        const d = parseSSE(e);
+        if (!d) return;
         logLine('exec-log', `✓ Execution complete: ${d.moves_completed} completed, ${d.moves_failed} failed, ${d.moves_skipped} skipped`);
         isExecuting = false;
         document.getElementById('btn-execute').disabled = false;
@@ -459,14 +516,37 @@ function connectSSE() {
     });
 
     eventSource.addEventListener('daemon_error', (e) => {
-        const d = JSON.parse(e.data).data;
+        const d = parseSSE(e);
+        if (!d) return;
         logLine('scan-log', `ERROR: ${d.message}`);
         logLine('exec-log', `ERROR: ${d.message}`);
+        // Show error toast visible on all tabs
+        showToast(d.message, 'error');
     });
 
-    // Handle native EventSource connection errors
+    eventSource.onopen = () => {
+        sseRetryDelay = 1000; // Reset backoff on successful connection
+        syncDaemonState();
+    };
+
     eventSource.onerror = () => {
-        logLine('scan-log', 'SSE connection lost, reconnecting...');
+        // CLOSED means explicitly terminated — no auto-reconnect at all.
+        // CONNECTING means a transient failure — the browser will auto-retry,
+        // but we manage our own backoff to avoid rapid reconnect storms.
+        if (eventSource.readyState === EventSource.CLOSED) {
+            eventSource.close();
+            eventSource = null;
+            console.warn('SSE connection closed permanently, reconnecting...');
+            setTimeout(() => connectSSE(), sseRetryDelay);
+            sseRetryDelay = Math.min(sseRetryDelay * 2, 30000);
+        } else if (eventSource.readyState === EventSource.CONNECTING) {
+            // Transient failure — close the auto-retrying source and do our own backoff
+            eventSource.close();
+            eventSource = null;
+            console.warn(`SSE transient error, retrying in ${sseRetryDelay / 1000}s...`);
+            setTimeout(() => connectSSE(), sseRetryDelay);
+            sseRetryDelay = Math.min(sseRetryDelay * 2, 30000);
+        }
     };
 }
 
@@ -480,6 +560,25 @@ function logLine(logId, msg) {
     log.scrollTop = log.scrollHeight;
 }
 
+function showToast(message, type = 'error') {
+    // Remove existing toast if any
+    const existing = document.getElementById('pb-toast');
+    if (existing) existing.remove();
+
+    const toast = document.createElement('div');
+    toast.id = 'pb-toast';
+    toast.style.cssText = `
+        position: fixed; top: 20px; right: 20px; z-index: 9999;
+        padding: 12px 20px; border-radius: 4px; font-size: 13px; max-width: 500px;
+        background: ${type === 'error' ? 'var(--pb-red)' : 'var(--pb-green)'}; color: white;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.3); cursor: pointer;
+    `;
+    toast.textContent = message;
+    toast.addEventListener('click', () => toast.remove());
+    document.body.appendChild(toast);
+    setTimeout(() => toast.remove(), 8000);
+}
+
 // ── Dashboard ───────────────────────────────────────────────────────
 
 async function loadDisks() {
@@ -487,9 +586,20 @@ async function loadDisks() {
     const container = document.getElementById('disk-bars');
     const status = document.getElementById('dashboard-status');
 
-    if (!res.success || !res.data || res.data.length === 0) {
-        container.innerHTML = '<p>No disks found. Start a scan first.</p>';
-        status.textContent = res.error || 'No data available.';
+    if (!res.success) {
+        container.innerHTML = '';
+        const errP = document.createElement('p');
+        errP.textContent = 'Error loading disks: ' + (res.error || 'Unknown error');
+        container.appendChild(errP);
+        status.textContent = '';
+        return;
+    }
+    if (!res.data || res.data.length === 0) {
+        container.innerHTML = '';
+        const emptyP = document.createElement('p');
+        emptyP.textContent = 'No disks found. Start a scan first.';
+        container.appendChild(emptyP);
+        status.textContent = '';
         return;
     }
 
@@ -624,7 +734,10 @@ function renderMovesTable(moves) {
         return;
     }
 
-    for (const m of moves) {
+    const DISPLAY_LIMIT = 200;
+    const displayMoves = moves.length > DISPLAY_LIMIT ? moves.slice(0, DISPLAY_LIMIT) : moves;
+
+    for (const m of displayMoves) {
         const tr = document.createElement('tr');
 
         const tdOrder = document.createElement('td');
@@ -651,6 +764,58 @@ function renderMovesTable(moves) {
         badge.textContent = m.status;
         tdStatus.appendChild(badge);
 
+        tr.appendChild(tdOrder);
+        tr.appendChild(tdFile);
+        tr.appendChild(tdSize);
+        tr.appendChild(tdFrom);
+        tr.appendChild(tdTo);
+        tr.appendChild(tdStatus);
+        tbody.appendChild(tr);
+    }
+
+    if (moves.length > DISPLAY_LIMIT) {
+        const tr = document.createElement('tr');
+        const td = document.createElement('td');
+        td.colSpan = 6;
+        td.style.textAlign = 'center';
+        const btn = document.createElement('button');
+        btn.className = 'pb-btn';
+        btn.style.cssText = 'padding:4px 12px;font-size:12px;background:var(--line-color,#444);color:var(--text-color,#ccc)';
+        btn.textContent = `Show all ${moves.length} moves (${moves.length - DISPLAY_LIMIT} hidden)`;
+        btn.addEventListener('click', () => {
+            renderMovesTable.__showAll = true;
+            renderMovesTableFull(moves);
+        });
+        td.appendChild(btn);
+        tr.appendChild(td);
+        tbody.appendChild(tr);
+    }
+}
+
+function renderMovesTableFull(moves) {
+    const tbody = document.getElementById('moves-table');
+    while (tbody.firstChild) tbody.removeChild(tbody.firstChild);
+
+    for (const m of moves) {
+        const tr = document.createElement('tr');
+        const tdOrder = document.createElement('td');
+        tdOrder.textContent = m.move_order;
+        const tdFile = document.createElement('td');
+        tdFile.textContent = m.file_path;
+        tdFile.title = m.file_path;
+        tdFile.style.cssText = 'max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+        const tdSize = document.createElement('td');
+        tdSize.textContent = formatBytes(m.file_size);
+        const tdFrom = document.createElement('td');
+        tdFrom.textContent = m.source_disk_name;
+        const tdTo = document.createElement('td');
+        tdTo.textContent = m.target_disk_name;
+        const tdStatus = document.createElement('td');
+        const badge = document.createElement('span');
+        badge.id = 'move-status-' + m.id;
+        badge.className = 'pb-status-badge pb-status-' + m.status;
+        badge.textContent = m.status;
+        tdStatus.appendChild(badge);
         tr.appendChild(tdOrder);
         tr.appendChild(tdFile);
         tr.appendChild(tdSize);
@@ -713,6 +878,7 @@ async function executePlan() {
 }
 
 async function cancelExecution() {
+    if (!currentPlanId) return;
     if (!confirm('Cancel the current operation?')) return;
     await apiCall(`/api/plan/${currentPlanId}/cancel`, { method: 'POST' });
     logLine('exec-log', 'Cancellation requested...');
@@ -739,12 +905,20 @@ function buildSettingsForm(s) {
     const table = document.createElement('table');
     table.className = 'pb-table';
 
-    function addRow(label, inputEl) {
+    function addRow(label, inputEl, helpText) {
         const tr = document.createElement('tr');
         const tdLabel = document.createElement('td');
+        tdLabel.style.verticalAlign = 'top';
+        tdLabel.style.paddingTop = '10px';
         const strong = document.createElement('strong');
         strong.textContent = label;
         tdLabel.appendChild(strong);
+        if (helpText) {
+            const help = document.createElement('div');
+            help.style.cssText = 'font-size:11px;color:var(--text-color,#999);font-weight:normal;margin-top:2px';
+            help.textContent = helpText;
+            tdLabel.appendChild(help);
+        }
         const tdInput = document.createElement('td');
         tdInput.appendChild(inputEl);
         tr.appendChild(tdLabel);
@@ -754,7 +928,7 @@ function buildSettingsForm(s) {
 
     const portSpan = document.createElement('span');
     portSpan.textContent = s.port + ' (restart required to change)';
-    addRow('Port', portSpan);
+    addRow('Port', portSpan, 'HTTP port for the daemon API. Requires restart.');
 
     const threadsSelect = document.createElement('select');
     threadsSelect.id = 'set-threads';
@@ -764,7 +938,7 @@ function buildSettingsForm(s) {
         if (v === s.scan_threads) opt.selected = true;
         threadsSelect.appendChild(opt);
     });
-    addRow('Scan Threads', threadsSelect);
+    addRow('Scan Threads', threadsSelect, 'Parallel threads for filesystem scanning. Higher = faster but more CPU.');
 
     const alphaInput = document.createElement('input');
     alphaInput.type = 'number'; alphaInput.id = 'set-alpha';
@@ -774,7 +948,7 @@ function buildSettingsForm(s) {
     const alphaWrap = document.createElement('span');
     alphaWrap.appendChild(alphaInput);
     alphaWrap.appendChild(document.createTextNode(' %'));
-    addRow('Default Slider Alpha', alphaWrap);
+    addRow('Default Slider Alpha', alphaWrap, 'Default balance tradeoff. 0% = fewest moves, 100% = perfect balance.');
 
     const tolInput = document.createElement('input');
     tolInput.type = 'number'; tolInput.id = 'set-tolerance';
@@ -784,7 +958,7 @@ function buildSettingsForm(s) {
     const tolWrap = document.createElement('span');
     tolWrap.appendChild(tolInput);
     tolWrap.appendChild(document.createTextNode(' %'));
-    addRow('Max Tolerance', tolWrap);
+    addRow('Max Tolerance', tolWrap, 'Maximum allowed deviation from target utilization before rebalancing.');
 
     const headInput = document.createElement('input');
     headInput.type = 'number'; headInput.id = 'set-headroom';
@@ -794,12 +968,12 @@ function buildSettingsForm(s) {
     const headWrap = document.createElement('span');
     headWrap.appendChild(headInput);
     headWrap.appendChild(document.createTextNode(' GB'));
-    addRow('Min Free Headroom', headWrap);
+    addRow('Min Free Headroom', headWrap, 'Minimum free space to maintain on each disk after moves.');
 
     const parityCheck = document.createElement('input');
     parityCheck.type = 'checkbox'; parityCheck.id = 'set-parity';
     parityCheck.checked = s.warn_parity_check;
-    addRow('Warn on Parity Check', parityCheck);
+    addRow('Warn on Parity Check', parityCheck, 'Block execution while a parity check is running.');
 
     // Catalog location: ephemeral (RAM) vs persistent (custom path)
     const isCustom = s.db_path && !s.db_path.startsWith('/tmp/');
@@ -832,7 +1006,7 @@ function buildSettingsForm(s) {
     catalogNote.textContent = 'Restart required to apply. Persistent path is excluded from scans.';
     catalogWrap.appendChild(catalogNote);
 
-    addRow('Catalog Location', catalogWrap);
+    addRow('Catalog Location', catalogWrap, 'Where the file catalog database is stored.');
 
     form.appendChild(table);
 
@@ -886,7 +1060,7 @@ async function saveSettings() {
     const res = await apiCall('/api/settings', { method: 'POST', body: JSON.stringify(body) });
     if (res.success) {
         msg.style.color = 'var(--pb-green)';
-        msg.textContent = 'Saved!';
+        msg.textContent = 'Settings saved. Some changes require a daemon restart.';
     } else {
         msg.style.color = 'var(--pb-red)';
         msg.textContent = 'Error: ' + (res.error || 'Unknown error');
@@ -898,6 +1072,18 @@ async function saveSettings() {
 
 function init() {
     connectSSE();
+
+    // Sync scan tab thread selector from saved settings
+    apiCall('/api/settings').then(res => {
+        if (res.success && res.data) {
+            const sel = document.getElementById('scan-threads');
+            const val = String(res.data.scan_threads);
+            for (const opt of sel.options) {
+                if (opt.value === val) { opt.selected = true; break; }
+            }
+        }
+    });
+
     loadDisks();
 }
 

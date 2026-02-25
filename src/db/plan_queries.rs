@@ -13,7 +13,7 @@ impl Database {
         target_utilization: f64,
         initial_imbalance: f64,
     ) -> Result<i64> {
-        let conn = self.conn();
+        let conn = self.conn()?;
         conn.execute(
             "INSERT INTO balance_plans \
              (tolerance, slider_alpha, target_utilization, initial_imbalance)
@@ -31,7 +31,7 @@ impl Database {
         total_moves: i32,
         total_bytes: u64,
     ) -> Result<()> {
-        let conn = self.conn();
+        let conn = self.conn()?;
         conn.execute(
             "UPDATE balance_plans \
              SET projected_imbalance = ?1, total_moves = ?2, total_bytes_to_move = ?3 \
@@ -43,7 +43,7 @@ impl Database {
 
     /// Update plan status.
     pub fn update_plan_status(&self, plan_id: i64, status: PlanStatus) -> Result<()> {
-        let conn = self.conn();
+        let conn = self.conn()?;
         conn.execute(
             "UPDATE balance_plans SET status = ?1 WHERE id = ?2",
             params![status.as_str(), plan_id],
@@ -53,7 +53,7 @@ impl Database {
 
     /// Get a balance plan by ID.
     pub fn get_plan(&self, plan_id: i64) -> Result<Option<BalancePlan>> {
-        let conn = self.conn();
+        let conn = self.conn()?;
         let plan = conn
             .query_row(
                 "SELECT id, created_at, tolerance, slider_alpha, target_utilization,

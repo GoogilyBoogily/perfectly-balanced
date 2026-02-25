@@ -41,17 +41,15 @@ pub(crate) async fn rsync_supports_progress2() -> bool {
 }
 
 /// Check if a file is currently open by another process via lsof.
-pub(crate) async fn is_file_open(path: &str) -> bool {
-    match Command::new("lsof").arg(path).output().await {
-        Ok(output) => {
-            // lsof returns 0 if the file is open, 1 if not
-            output.status.success()
-        }
-        Err(_) => {
-            // If lsof isn't available, assume not open
-            false
-        }
-    }
+pub(crate) async fn is_file_open(path: &str) -> Result<bool> {
+    let output = Command::new("lsof")
+        .arg(path)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .await
+        .context("Failed to execute lsof — cannot verify file safety")?;
+    Ok(output.status.success())
 }
 
 /// Check if a parity check is currently running.
@@ -60,9 +58,9 @@ pub(crate) async fn is_file_open(path: &str) -> bool {
 /// The progress lines contain patterns like `resync = 42.5%` or `check = 12.3%`.
 /// We match on ` = ` suffix to avoid false-positives from the word "check"
 /// appearing in other mdstat contexts.
-pub(crate) async fn is_parity_check_running() -> bool {
-    match tokio::fs::read_to_string("/proc/mdstat").await {
-        Ok(content) => content.contains("resync =") || content.contains("check ="),
-        Err(_) => false,
-    }
+pub(crate) async fn is_parity_check_running() -> Result<bool> {
+    let content = tokio::fs::read_to_string("/proc/mdstat")
+        .await
+        .context("Failed to read /proc/mdstat — cannot verify parity status")?;
+    Ok(content.contains("resync =") || content.contains("check ="))
 }

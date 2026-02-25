@@ -21,19 +21,56 @@ const FILE_COLUMNS: &str =
     "id, disk_id, file_path, file_name, size_bytes, is_directory, parent_path, mtime";
 
 impl Database {
-    /// Begin a full disk rescan: clear existing data and return a transaction guard.
-    /// The caller must call `commit_disk_scan` when done, or the changes are rolled back.
-    pub fn begin_disk_scan(&self, disk_id: i64) -> Result<()> {
-        let conn = self.conn();
-        conn.execute_batch("BEGIN IMMEDIATE")?;
-        conn.execute("DELETE FROM files WHERE disk_id = ?1", params![disk_id])?;
-        conn.execute("DELETE FROM folder_sizes WHERE disk_id = ?1", params![disk_id])?;
+    /// Atomic disk scan: clear existing data, insert all files, recompute folder sizes.
+    ///
+    /// The entire operation runs in a single transaction under a single mutex lock.
+    /// If any step fails, the transaction is rolled back and previous data is preserved.
+    pub fn atomic_disk_scan(&self, disk_id: i64, files: &[FileInsert]) -> Result<()> {
+        let conn = self.conn()?;
+        let tx = conn.unchecked_transaction()?;
+
+        // Clear existing file data for this disk (folder_sizes are cleared before recompute below)
+        tx.execute("DELETE FROM files WHERE disk_id = ?1", params![disk_id])?;
+
+        // Batch insert all files
+        {
+            let mut stmt = tx.prepare_cached(
+                "INSERT OR REPLACE INTO files \
+                 (disk_id, file_path, file_name, size_bytes, is_directory, parent_path, mtime)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            )?;
+
+            for f in files {
+                stmt.execute(params![
+                    f.disk_id,
+                    f.file_path,
+                    f.file_name,
+                    f.size_bytes as i64,
+                    f.is_directory as i64,
+                    f.parent_path,
+                    f.mtime,
+                ])?;
+            }
+        }
+
+        // Recompute folder sizes
+        tx.execute("DELETE FROM folder_sizes WHERE disk_id = ?1", params![disk_id])?;
+        tx.execute(
+            "INSERT INTO folder_sizes (disk_id, folder_path, total_bytes, file_count)
+             SELECT disk_id, parent_path, SUM(size_bytes), COUNT(*)
+             FROM files
+             WHERE disk_id = ?1 AND is_directory = 0 AND parent_path IS NOT NULL
+             GROUP BY disk_id, parent_path",
+            params![disk_id],
+        )?;
+
+        tx.commit()?;
         Ok(())
     }
 
-    /// Batch insert files within the current transaction.
+    /// Batch insert files (used during incremental scan within an existing transaction context).
     pub fn insert_files_batch(&self, files: &[FileInsert]) -> Result<()> {
-        let conn = self.conn();
+        let conn = self.conn()?;
 
         let mut stmt = conn.prepare_cached(
             "INSERT OR REPLACE INTO files \
@@ -56,32 +93,9 @@ impl Database {
         Ok(())
     }
 
-    /// Finalize a disk scan: recompute folder sizes and commit the transaction.
-    pub fn commit_disk_scan(&self, disk_id: i64) -> Result<()> {
-        let conn = self.conn();
-        conn.execute("DELETE FROM folder_sizes WHERE disk_id = ?1", params![disk_id])?;
-        conn.execute(
-            "INSERT INTO folder_sizes (disk_id, folder_path, total_bytes, file_count)
-             SELECT disk_id, parent_path, SUM(size_bytes), COUNT(*)
-             FROM files
-             WHERE disk_id = ?1 AND is_directory = 0 AND parent_path IS NOT NULL
-             GROUP BY disk_id, parent_path",
-            params![disk_id],
-        )?;
-        conn.execute_batch("COMMIT")?;
-        Ok(())
-    }
-
-    /// Roll back a disk scan transaction (e.g. on error or cancellation).
-    pub fn rollback_disk_scan(&self) -> Result<()> {
-        let conn = self.conn();
-        conn.execute_batch("ROLLBACK")?;
-        Ok(())
-    }
-
     /// Get all non-directory files on a disk, sorted by size descending.
     pub fn get_all_files_on_disk_by_size(&self, disk_id: i64) -> Result<Vec<FileEntry>> {
-        let conn = self.conn();
+        let conn = self.conn()?;
         let mut stmt = conn.prepare(&format!(
             "SELECT {FILE_COLUMNS} FROM files \
                  WHERE disk_id = ?1 AND is_directory = 0 \
@@ -96,7 +110,7 @@ impl Database {
 
     /// Get total file count and bytes for a disk.
     pub fn get_disk_file_stats(&self, disk_id: i64) -> Result<(u64, u64)> {
-        let conn = self.conn();
+        let conn = self.conn()?;
         let (count, bytes): (i64, i64) = conn.query_row(
             "SELECT COUNT(*), COALESCE(SUM(size_bytes), 0) \
              FROM files WHERE disk_id = ?1 AND is_directory = 0",

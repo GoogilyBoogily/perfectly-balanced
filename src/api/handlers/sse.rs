@@ -21,10 +21,16 @@ pub(crate) async fn sse_events(
                     let event_type = event.event_type().to_string();
                     match serde_json::to_string(&event) {
                         Ok(json) => Some(Ok(SseEvent::default().event(event_type).data(json))),
-                        Err(_) => None,
+                        Err(e) => {
+                            tracing::warn!("Failed to serialize SSE event: {}", e);
+                            None
+                        }
                     }
                 }
-                Err(_) => None,
+                Err(e) => {
+                    tracing::debug!("SSE subscriber lagged: {}", e);
+                    None
+                }
             },
         );
 

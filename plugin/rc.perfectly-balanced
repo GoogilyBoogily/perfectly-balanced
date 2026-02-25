@@ -9,14 +9,22 @@ PIDFILE="/var/run/perfectly-balanced.pid"
 LOG="/var/log/perfectly-balanced.log"
 
 start() {
-    # Stop any existing instance first
+    # Stop any existing instance gracefully (same 10s window as stop())
     if [ -f "$PIDFILE" ]; then
         PID=$(cat "$PIDFILE")
         if kill -0 "$PID" 2>/dev/null; then
             echo "Stopping existing instance (PID $PID)..."
             kill "$PID"
-            sleep 2
-            kill -0 "$PID" 2>/dev/null && kill -9 "$PID"
+            for i in $(seq 1 10); do
+                if ! kill -0 "$PID" 2>/dev/null; then
+                    break
+                fi
+                sleep 1
+            done
+            if kill -0 "$PID" 2>/dev/null; then
+                echo "Force killing existing instance..."
+                kill -9 "$PID"
+            fi
         fi
         rm -f "$PIDFILE"
     fi

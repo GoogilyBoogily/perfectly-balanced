@@ -34,7 +34,7 @@ impl Database {
         free_bytes: u64,
         filesystem: Option<&str>,
     ) -> Result<i64> {
-        let conn = self.conn();
+        let conn = self.conn()?;
         let id: i64 = conn.query_row(
             "INSERT INTO disks (disk_name, mount_path, total_bytes, used_bytes, free_bytes, \
              filesystem, updated_at)
@@ -62,7 +62,7 @@ impl Database {
 
     /// Get all disks.
     pub fn get_all_disks(&self) -> Result<Vec<Disk>> {
-        let conn = self.conn();
+        let conn = self.conn()?;
         let mut stmt =
             conn.prepare(&format!("SELECT {DISK_COLUMNS} FROM disks ORDER BY disk_name"))?;
 
@@ -73,7 +73,7 @@ impl Database {
 
     /// Get included disks only.
     pub fn get_included_disks(&self) -> Result<Vec<Disk>> {
-        let conn = self.conn();
+        let conn = self.conn()?;
         let mut stmt = conn.prepare(&format!(
             "SELECT {DISK_COLUMNS} FROM disks WHERE included = 1 ORDER BY disk_name"
         ))?;
@@ -85,7 +85,7 @@ impl Database {
 
     /// Get a disk by ID.
     pub fn get_disk(&self, disk_id: i64) -> Result<Option<Disk>> {
-        let conn = self.conn();
+        let conn = self.conn()?;
         let disk = conn
             .query_row(
                 &format!("SELECT {DISK_COLUMNS} FROM disks WHERE id = ?1"),
@@ -99,12 +99,13 @@ impl Database {
 
     /// Set disk inclusion status.
     pub fn set_disk_included(&self, disk_id: i64, included: bool) -> Result<()> {
-        let conn = self.conn();
-        conn.execute(
+        let conn = self.conn()?;
+        let affected = conn.execute(
             "UPDATE disks SET included = ?1, \
              updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?2",
             params![included as i64, disk_id],
         )?;
+        anyhow::ensure!(affected > 0, "No disk found with id {disk_id}");
         Ok(())
     }
 }

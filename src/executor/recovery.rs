@@ -44,14 +44,33 @@ pub(crate) async fn cleanup_partial_files(
 
         match (source_exists, target_exists) {
             (true, true) => {
-                // Target is a partial file from interrupted rsync — delete it
-                if let Err(e) = tokio::fs::remove_file(&target).await {
-                    warn!("Failed to remove partial file {} for move {}: {}", target, m.id, e);
+                // Both exist — check if target is a complete copy (size matches DB record)
+                // or a partial file from interrupted rsync.
+                let target_size = tokio::fs::metadata(&target)
+                    .await
+                    .map(|md| md.len())
+                    .unwrap_or(0);
+
+                if target_size == m.file_size as u64 {
+                    // Target matches expected size — rsync likely completed the copy
+                    // but crashed before removing the source. Mark complete.
+                    if let Err(e) = tokio::fs::remove_file(&source).await {
+                        warn!("Move {} recovered as completed but failed to remove source {}: {}", m.id, source, e);
+                    } else {
+                        info!("Move {} recovered as completed (removed source): {}", m.id, m.file_path);
+                    }
+                    db.update_move_status(m.id, MoveStatus::Completed, None)?;
+                    completed += 1;
                 } else {
-                    info!("Removed partial file: {}", target);
-                    cleaned += 1;
+                    // Target is smaller — partial file from interrupted rsync. Delete it.
+                    if let Err(e) = tokio::fs::remove_file(&target).await {
+                        warn!("Failed to remove partial file {} for move {}: {}", target, m.id, e);
+                    } else {
+                        info!("Removed partial file ({} bytes vs expected {}): {}", target_size, m.file_size, target);
+                        cleaned += 1;
+                    }
+                    // Move stays Pending (already reset by recover_stale_states)
                 }
-                // Move stays Pending (already reset by recover_stale_states)
             }
             (true, false) => {
                 // No partial file to clean up, move stays Pending

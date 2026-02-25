@@ -12,17 +12,19 @@ pub(crate) async fn start_scan(
     State(state): State<Arc<AppState>>,
     Json(req): Json<ScanRequest>,
 ) -> impl IntoResponse {
+    // Atomically check idle and transition to scanning
     {
-        let status = state.status.read().await;
+        let mut status = state.status.write().await;
         if status.state != DaemonState::Idle {
             return Json(ApiResponse::<&str>::err(format!(
                 "Cannot start scan: daemon is currently {:?}",
                 status.state
             )));
         }
+        *status = DaemonStatus::scanning("Preparing scan...");
     }
 
-    let threads = req.threads.unwrap_or(state.config.scan_threads);
+    let threads = req.threads.unwrap_or(state.config.scan_threads).clamp(1, 32);
     let token = state.new_operation_token().await;
     let state_clone = state.clone();
 
@@ -30,10 +32,6 @@ pub(crate) async fn start_scan(
         let rt = tokio::runtime::Handle::current();
 
         let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
-            rt.block_on(async {
-                *state_clone.status.write().await = DaemonStatus::scanning("Discovering disks...");
-            });
-
             let discovered = match scanner::discover_disks(&state_clone.config.mnt_base) {
                 Ok(d) => d,
                 Err(e) => {

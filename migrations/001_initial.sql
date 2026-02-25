@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS disks (
 );
 
 CREATE TABLE IF NOT EXISTS files (
-    id            INTEGER PRIMARY KEY,
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
     disk_id       INTEGER NOT NULL REFERENCES disks(id),
     file_path     TEXT NOT NULL,
     file_name     TEXT NOT NULL,
@@ -37,7 +37,7 @@ CREATE INDEX IF NOT EXISTS idx_files_size_global ON files(size_bytes DESC)
 CREATE INDEX IF NOT EXISTS idx_files_parent ON files(disk_id, parent_path);
 
 CREATE TABLE IF NOT EXISTS folder_sizes (
-    id            INTEGER PRIMARY KEY,
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
     disk_id       INTEGER NOT NULL REFERENCES disks(id),
     folder_path   TEXT NOT NULL,
     total_bytes   INTEGER NOT NULL DEFAULT 0,

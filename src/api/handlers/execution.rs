@@ -33,16 +33,7 @@ pub(crate) async fn execute_plan(
     State(state): State<Arc<AppState>>,
     Path(plan_id): Path<i64>,
 ) -> impl IntoResponse {
-    {
-        let status = state.status.read().await;
-        if status.state != DaemonState::Idle {
-            return Json(ApiResponse::<&str>::err(format!(
-                "Cannot execute: daemon is currently {:?}",
-                status.state
-            )));
-        }
-    }
-
+    // Validate plan exists and is executable (before acquiring status lock)
     match state.db.get_plan(plan_id) {
         Ok(Some(plan)) if plan.status == PlanStatus::Planned => {}
         Ok(Some(plan)) => {
@@ -59,16 +50,36 @@ pub(crate) async fn execute_plan(
         }
     }
 
-    if state.config.warn_parity_check && crate::executor::is_parity_check_running().await {
-        return Json(ApiResponse::<&str>::err(
-            "A parity check is currently running. \
-             Stop it first or disable the warning in settings.",
-        ));
+    // Check parity (before acquiring status lock)
+    if state.config.warn_parity_check {
+        match crate::executor::is_parity_check_running().await {
+            Ok(true) => {
+                return Json(ApiResponse::<&str>::err(
+                    "A parity check is currently running. \
+                     Stop it first or disable the warning in settings.",
+                ));
+            }
+            Ok(false) => {} // no parity check, proceed
+            Err(e) => {
+                tracing::warn!("Cannot determine parity status: {}", e);
+                // On non-Linux systems (dev), /proc/mdstat won't exist — allow proceeding
+            }
+        }
+    }
+
+    // Atomically check idle and transition to executing
+    {
+        let mut status = state.status.write().await;
+        if status.state != DaemonState::Idle {
+            return Json(ApiResponse::<&str>::err(format!(
+                "Cannot execute: daemon is currently {:?}",
+                status.state
+            )));
+        }
+        *status = DaemonStatus::executing("Starting plan execution...");
     }
 
     let token = state.new_operation_token().await;
-
-    *state.status.write().await = DaemonStatus::executing("Starting plan execution...");
 
     let state_clone = state.clone();
     let handle = tokio::spawn(async move {
@@ -177,21 +188,40 @@ async fn process_plan_moves(
                 continue;
             }
 
-            if crate::executor::is_file_open(&source_full).await {
-                tracing::warn!("File is open, skipping: {}", source_full);
-                state.db.update_move_status(
-                    m.id,
-                    MoveStatus::Skipped,
-                    Some("File is currently open"),
-                )?;
-                skipped += 1;
-                let _ = state.event_hub.publish(crate::events::Event::MoveComplete {
-                    move_id: m.id,
-                    status: "skipped".to_string(),
-                    verified: false,
-                    error: Some("File is currently open".to_string()),
-                });
-                continue;
+            match crate::executor::is_file_open(&source_full).await {
+                Ok(true) => {
+                    tracing::warn!("File is open, skipping: {}", source_full);
+                    state.db.update_move_status(
+                        m.id,
+                        MoveStatus::Skipped,
+                        Some("File is currently open"),
+                    )?;
+                    skipped += 1;
+                    let _ = state.event_hub.publish(crate::events::Event::MoveComplete {
+                        move_id: m.id,
+                        status: "skipped".to_string(),
+                        verified: false,
+                        error: Some("File is currently open".to_string()),
+                    });
+                    continue;
+                }
+                Ok(false) => {} // file not open, proceed
+                Err(e) => {
+                    tracing::error!("Cannot verify file safety: {}", e);
+                    state.db.update_move_status(
+                        m.id,
+                        MoveStatus::Failed,
+                        Some(&format!("Cannot verify file safety: {e}")),
+                    )?;
+                    failed += 1;
+                    let _ = state.event_hub.publish(crate::events::Event::MoveComplete {
+                        move_id: m.id,
+                        status: "failed".to_string(),
+                        verified: false,
+                        error: Some(format!("Cannot verify file safety: {e}")),
+                    });
+                    continue;
+                }
             }
 
             state.db.update_move_status(m.id, MoveStatus::InProgress, None)?;
@@ -215,7 +245,7 @@ async fn process_plan_moves(
             };
 
             match execute_single_rsync(&job).await {
-                Ok(true) => {
+                Ok(()) => {
                     state.db.update_move_status(m.id, MoveStatus::Completed, None)?;
                     completed += 1;
                     let _ = state.event_hub.publish(crate::events::Event::MoveComplete {
@@ -225,22 +255,19 @@ async fn process_plan_moves(
                         error: None,
                     });
                 }
-                Ok(false) => {
-                    if cancel.is_cancelled() {
-                        state.db.update_move_status(m.id, MoveStatus::Pending, None)?;
-                    } else {
-                        state.db.update_move_status(
-                            m.id,
-                            MoveStatus::Failed,
-                            Some("rsync failed"),
-                        )?;
-                        failed += 1;
-                    }
+                Err(_e) if cancel.is_cancelled() => {
+                    state.db.update_move_status(m.id, MoveStatus::Pending, None)?;
                 }
                 Err(e) => {
                     let msg = format!("{e:#}");
                     state.db.update_move_status(m.id, MoveStatus::Failed, Some(&msg))?;
                     failed += 1;
+                    let _ = state.event_hub.publish(crate::events::Event::MoveComplete {
+                        move_id: m.id,
+                        status: "failed".to_string(),
+                        verified: false,
+                        error: Some(msg.clone()),
+                    });
                 }
             }
         }
@@ -261,15 +288,15 @@ async fn process_plan_moves(
     Ok(())
 }
 
-async fn execute_single_rsync(job: &RsyncJob<'_>) -> anyhow::Result<bool> {
-    use tokio::io::AsyncBufReadExt;
+async fn execute_single_rsync(job: &RsyncJob<'_>) -> anyhow::Result<()> {
+    use tokio::io::{AsyncBufReadExt, AsyncReadExt};
+    const STDERR_CAP: usize = 64 * 1024;
 
     let source = format!("{}/{}", job.source_mount, job.file_path);
     let target = format!("{}/{}", job.target_mount, job.file_path);
 
-    if source.contains("/mnt/user/") || target.contains("/mnt/user/") {
-        anyhow::bail!("SAFETY: Cannot operate on FUSE paths");
-    }
+    crate::scanner::validation::validate_path(&source)?;
+    crate::scanner::validation::validate_path(&target)?;
 
     if let Some(parent) = std::path::Path::new(&target).parent() {
         tokio::fs::create_dir_all(parent).await?;
@@ -289,9 +316,26 @@ async fn execute_single_rsync(job: &RsyncJob<'_>) -> anyhow::Result<bool> {
         .spawn()?;
 
     let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
 
     // Store child in the shared slot so shutdown can kill it
     *job.rsync_child_slot.lock().await = Some(child);
+
+    // Drain stderr in background to prevent pipe buffer deadlock.
+    // We read_to_string() to fully consume stderr — a single read() could leave
+    // data in the pipe, causing rsync to block on write and deadlock the whole move.
+    let stderr_task = tokio::spawn(async move {
+        if let Some(mut stderr) = stderr {
+            let mut buf = String::new();
+            match stderr.read_to_string(&mut buf).await {
+                Ok(n) if n > STDERR_CAP => buf.truncate(STDERR_CAP),
+                _ => {}
+            }
+            buf
+        } else {
+            String::new()
+        }
+    });
 
     if let Some(stdout) = stdout {
         let reader = tokio::io::BufReader::new(stdout);
@@ -305,7 +349,8 @@ async fn execute_single_rsync(job: &RsyncJob<'_>) -> anyhow::Result<bool> {
                     child.kill().await.ok();
                     child.wait().await.ok();
                 }
-                return Ok(false);
+                stderr_task.abort();
+                anyhow::bail!("rsync cancelled during execution");
             }
             if let Some(caps) = PROGRESS_RE.captures(&line) {
                 let pct: f64 = caps[1].parse().unwrap_or(0.0);
@@ -324,20 +369,35 @@ async fn execute_single_rsync(job: &RsyncJob<'_>) -> anyhow::Result<bool> {
 
     // Take child back from slot and wait for it
     let child = job.rsync_child_slot.lock().await.take();
+    let stderr_output = stderr_task.await.unwrap_or_default();
     if let Some(mut child) = child {
         let exit = child.wait().await?;
-        Ok(exit.success())
+        if exit.success() {
+            Ok(())
+        } else {
+            let code = exit.code().unwrap_or(-1);
+            let stderr_summary = if stderr_output.is_empty() {
+                String::new()
+            } else {
+                format!(": {}", stderr_output.lines().last().unwrap_or(""))
+            };
+            anyhow::bail!("rsync exited with code {code}{stderr_summary}")
+        }
     } else {
-        // Child was already killed by shutdown — treat as cancelled
-        Ok(false)
+        anyhow::bail!("rsync process was killed during shutdown")
     }
 }
 
 pub(crate) async fn cancel_operation(
     State(state): State<Arc<AppState>>,
-    Path(_plan_id): Path<i64>,
+    Path(plan_id): Path<i64>,
 ) -> impl IntoResponse {
+    let status = state.status.read().await;
+    if status.state == DaemonState::Idle {
+        return Json(ApiResponse::<&str>::err("No operation in progress"));
+    }
+    drop(status);
     state.request_cancel().await;
-    info!("Cancellation requested");
+    info!("Cancellation requested for plan {}", plan_id);
     Json(ApiResponse::ok("Cancellation requested"))
 }

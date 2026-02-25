@@ -28,10 +28,18 @@ fn map_move_detail_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<PlannedMoveD
     })
 }
 
+const MOVE_DETAIL_SELECT: &str = "\
+    SELECT m.id, m.plan_id, m.file_id, m.source_disk_id, m.target_disk_id,
+           m.file_path, m.file_size, m.exec_order, m.phase, m.status, m.error_message,
+           s.disk_name AS source_disk_name, t.disk_name AS target_disk_name
+    FROM planned_moves m
+    JOIN disks s ON m.source_disk_id = s.id
+    JOIN disks t ON m.target_disk_id = t.id";
+
 impl Database {
     /// Insert a batch of planned moves.
     pub fn insert_planned_moves(&self, moves: &[PlannedMove]) -> Result<()> {
-        let conn = self.conn();
+        let conn = self.conn()?;
         let tx = conn.unchecked_transaction()?;
 
         {
@@ -62,23 +70,12 @@ impl Database {
 
     /// Get all moves for a plan, ordered by execution order.
     pub fn get_plan_moves(&self, plan_id: i64) -> Result<Vec<PlannedMoveDetail>> {
-        let conn = self.conn();
-        let mut stmt = conn.prepare(
-            "SELECT m.id, m.plan_id, m.file_id, m.source_disk_id, m.target_disk_id,
-                    m.file_path, m.file_size, m.exec_order, m.phase, m.status, \
-             m.error_message,
-                    s.disk_name AS source_disk_name, t.disk_name AS target_disk_name
-             FROM planned_moves m
-             JOIN disks s ON m.source_disk_id = s.id
-             JOIN disks t ON m.target_disk_id = t.id
-             WHERE m.plan_id = ?1
-             ORDER BY m.exec_order",
-        )?;
-
+        let conn = self.conn()?;
+        let sql = format!("{MOVE_DETAIL_SELECT} WHERE m.plan_id = ?1 ORDER BY m.exec_order");
+        let mut stmt = conn.prepare(&sql)?;
         let moves = stmt
             .query_map(params![plan_id], map_move_detail_row)?
             .collect::<Result<Vec<_>, _>>()?;
-
         Ok(moves)
     }
 
@@ -89,7 +86,7 @@ impl Database {
         status: MoveStatus,
         error_message: Option<&str>,
     ) -> Result<()> {
-        let conn = self.conn();
+        let conn = self.conn()?;
         conn.execute(
             "UPDATE planned_moves SET status = ?1, error_message = ?2 WHERE id = ?3",
             params![status.as_str(), error_message, move_id],
@@ -103,29 +100,20 @@ impl Database {
         plan_id: i64,
         phase: i32,
     ) -> Result<Vec<PlannedMoveDetail>> {
-        let conn = self.conn();
-        let mut stmt = conn.prepare(
-            "SELECT m.id, m.plan_id, m.file_id, m.source_disk_id, m.target_disk_id,
-                    m.file_path, m.file_size, m.exec_order, m.phase, m.status, \
-             m.error_message,
-                    s.disk_name AS source_disk_name, t.disk_name AS target_disk_name
-             FROM planned_moves m
-             JOIN disks s ON m.source_disk_id = s.id
-             JOIN disks t ON m.target_disk_id = t.id
-             WHERE m.plan_id = ?1 AND m.phase = ?2 AND m.status = 'pending'
-             ORDER BY m.exec_order",
-        )?;
-
+        let conn = self.conn()?;
+        let sql = format!(
+            "{MOVE_DETAIL_SELECT} WHERE m.plan_id = ?1 AND m.phase = ?2 AND m.status = 'pending' ORDER BY m.exec_order"
+        );
+        let mut stmt = conn.prepare(&sql)?;
         let moves = stmt
             .query_map(params![plan_id, phase], map_move_detail_row)?
             .collect::<Result<Vec<_>, _>>()?;
-
         Ok(moves)
     }
 
     /// Get the max phase number in a plan.
     pub fn get_max_phase(&self, plan_id: i64) -> Result<i32> {
-        let conn = self.conn();
+        let conn = self.conn()?;
         let max: i32 = conn.query_row(
             "SELECT COALESCE(MAX(phase), 0) FROM planned_moves WHERE plan_id = ?1",
             params![plan_id],
@@ -140,10 +128,10 @@ impl Database {
             return Ok(Vec::new());
         }
 
-        let conn = self.conn();
+        let conn = self.conn()?;
         let placeholders: String = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
         let sql = format!(
-            "SELECT m.id, m.file_path, s.mount_path, t.mount_path \
+            "SELECT m.id, m.file_path, m.file_size, s.mount_path, t.mount_path \
              FROM planned_moves m \
              JOIN disks s ON m.source_disk_id = s.id \
              JOIN disks t ON m.target_disk_id = t.id \
@@ -159,8 +147,9 @@ impl Database {
                 Ok(MovePathInfo {
                     id: row.get(0)?,
                     file_path: row.get(1)?,
-                    source_mount: row.get(2)?,
-                    target_mount: row.get(3)?,
+                    file_size: row.get(2)?,
+                    source_mount: row.get(3)?,
+                    target_mount: row.get(4)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -170,7 +159,7 @@ impl Database {
 
     /// Mark all in_progress moves for a plan as failed (used by panic guard).
     pub fn fail_in_progress_moves(&self, plan_id: i64) -> Result<usize> {
-        let conn = self.conn();
+        let conn = self.conn()?;
         let count = conn.execute(
             "UPDATE planned_moves SET status = 'failed', error_message = 'Task panicked' \
              WHERE plan_id = ?1 AND status = 'in_progress'",
