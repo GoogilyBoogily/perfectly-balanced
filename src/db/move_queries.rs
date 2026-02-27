@@ -22,6 +22,7 @@ fn map_move_detail_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<PlannedMoveD
             phase: row.get(8)?,
             status,
             error_message: row.get(10)?,
+            source_mtime: row.get(13)?,
         },
         source_disk_name: row.get(11)?,
         target_disk_name: row.get(12)?,
@@ -31,7 +32,8 @@ fn map_move_detail_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<PlannedMoveD
 const MOVE_DETAIL_SELECT: &str = "\
     SELECT m.id, m.plan_id, m.file_id, m.source_disk_id, m.target_disk_id,
            m.file_path, m.file_size, m.exec_order, m.phase, m.status, m.error_message,
-           s.disk_name AS source_disk_name, t.disk_name AS target_disk_name
+           s.disk_name AS source_disk_name, t.disk_name AS target_disk_name,
+           m.source_mtime
     FROM planned_moves m
     JOIN disks s ON m.source_disk_id = s.id
     JOIN disks t ON m.target_disk_id = t.id";
@@ -46,8 +48,8 @@ impl Database {
             let mut stmt = tx.prepare_cached(
                 "INSERT INTO planned_moves \
                  (plan_id, file_id, source_disk_id, target_disk_id, file_path, \
-                 file_size, exec_order, phase)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                 file_size, exec_order, phase, source_mtime)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             )?;
 
             for m in moves {
@@ -60,6 +62,7 @@ impl Database {
                     m.file_size as i64,
                     m.move_order,
                     m.phase,
+                    m.source_mtime,
                 ])?;
             }
         }
@@ -131,7 +134,7 @@ impl Database {
         let conn = self.conn()?;
         let placeholders: String = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
         let sql = format!(
-            "SELECT m.id, m.file_path, m.file_size, s.mount_path, t.mount_path \
+            "SELECT m.id, m.file_path, m.file_size, s.mount_path, t.mount_path, m.source_mtime \
              FROM planned_moves m \
              JOIN disks s ON m.source_disk_id = s.id \
              JOIN disks t ON m.target_disk_id = t.id \
@@ -147,9 +150,10 @@ impl Database {
                 Ok(MovePathInfo {
                     id: row.get(0)?,
                     file_path: row.get(1)?,
-                    file_size: row.get(2)?,
+                    file_size: row.get::<_, i64>(2)? as u64,
                     source_mount: row.get(3)?,
                     target_mount: row.get(4)?,
+                    source_mtime: row.get(5)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;

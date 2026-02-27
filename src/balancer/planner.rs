@@ -216,6 +216,7 @@ fn assign_moves(
                 phase: 1,
                 status: MoveStatus::Pending,
                 error_message: None,
+                source_mtime: file.mtime,
             });
 
             disk_states[src_idx].sim_used =

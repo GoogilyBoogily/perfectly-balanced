@@ -153,6 +153,7 @@ pub struct PlannedMove {
     pub phase: i32,
     pub status: MoveStatus,
     pub error_message: Option<String>,
+    pub source_mtime: Option<i64>,
 }
 
 /// A move with additional context for display.
@@ -169,9 +170,10 @@ pub struct PlannedMoveDetail {
 pub struct MovePathInfo {
     pub id: i64,
     pub file_path: String,
-    pub file_size: i64,
+    pub file_size: u64,
     pub source_mount: String,
     pub target_mount: String,
+    pub source_mtime: Option<i64>,
 }
 
 /// Insert batch for scanning — lighter weight than FileEntry.

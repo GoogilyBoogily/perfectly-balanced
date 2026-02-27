@@ -92,6 +92,27 @@ impl Database {
             info!("Migration 001_initial applied successfully");
         }
 
+        if current_version < 2 {
+            info!("Applying migration 002_add_source_mtime...");
+            // Idempotent: if the column already exists (e.g. partial crash left schema
+            // modified but version un-bumped), the ALTER TABLE will fail with "duplicate
+            // column name". We catch that specific error and proceed to bump the version.
+            let col_exists = conn
+                .query_row(
+                    "SELECT COUNT(*) > 0 FROM pragma_table_info('planned_moves') WHERE name = 'source_mtime'",
+                    [],
+                    |row| row.get::<_, bool>(0),
+                )
+                .unwrap_or(false);
+            let tx = conn.unchecked_transaction()?;
+            if !col_exists {
+                tx.execute_batch("ALTER TABLE planned_moves ADD COLUMN source_mtime INTEGER;")?;
+            }
+            tx.execute_batch("INSERT OR IGNORE INTO schema_version (version) VALUES (2);")?;
+            tx.commit()?;
+            info!("Migration 002_add_source_mtime applied successfully");
+        }
+
         Ok(())
     }
 

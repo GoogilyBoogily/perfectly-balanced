@@ -23,7 +23,7 @@ pub(crate) fn get_disk_space(mount_path: &str) -> Result<DiskSpace> {
 
     let block_size = stat.f_frsize as u64;
     let total = stat.f_blocks as u64 * block_size;
-    let free = stat.f_bfree as u64 * block_size;
+    let free = stat.f_bavail as u64 * block_size;
     let used = total.saturating_sub(free);
 
     Ok(DiskSpace { total, used, free })

@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::signal;
@@ -34,6 +34,18 @@ async fn main() -> Result<()> {
 
     let config = AppConfig::load()?;
     info!("Configuration loaded: port={}, db_path={}", config.port, config.db_path);
+
+    // Acquire exclusive file lock to prevent dual daemon instances.
+    // The lock is held for the process lifetime via _lock_guard.
+    let lock_path = std::path::Path::new(&config.db_path)
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("/tmp"))
+        .join("perfectly-balanced.lock");
+    let lock_file = std::fs::File::create(&lock_path)
+        .with_context(|| format!("Failed to create lock file: {}", lock_path.display()))?;
+    try_lock_exclusive(&lock_file, &lock_path)?;
+    let _lock_guard = lock_file; // Hold for process lifetime
+    info!("Acquired exclusive lock: {}", lock_path.display());
 
     let db = Database::open(&config.db_path)?;
     db.run_migrations()?;
@@ -83,6 +95,23 @@ async fn main() -> Result<()> {
     }
 
     info!("Perfectly Balanced shut down cleanly");
+    Ok(())
+}
+
+/// Try to acquire an exclusive flock on the given file.
+/// Replaces the unmaintained `fs2` crate with a direct `libc::flock` call.
+#[allow(unsafe_code)] // flock() is a safe POSIX operation; no memory unsafety
+fn try_lock_exclusive(file: &std::fs::File, lock_path: &std::path::Path) -> Result<()> {
+    use std::os::unix::io::AsRawFd;
+    let ret = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+    if ret != 0 {
+        let err = std::io::Error::last_os_error();
+        anyhow::bail!(
+            "Another perfectly-balanced instance is already running (lock: {}): {}",
+            lock_path.display(),
+            err
+        );
+    }
     Ok(())
 }
 
