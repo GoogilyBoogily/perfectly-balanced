@@ -1,11 +1,7 @@
 use crate::api::responses::{ApiResponse, PlanRequest, PlanSummary};
 use crate::db::PlanStatus;
 use crate::{AppState, DaemonState, DaemonStatus};
-use axum::{
-    extract::{Path, State},
-    response::IntoResponse,
-    Json,
-};
+use axum::{extract::State, response::IntoResponse, Json};
 use std::sync::Arc;
 
 pub(crate) async fn handle_generate_plan(
@@ -23,7 +19,6 @@ pub(crate) async fn handle_generate_plan(
     }
 
     let alpha = req.alpha.unwrap_or(state.config.slider_alpha);
-    let excluded = req.excluded_disks.unwrap_or_default();
 
     *state.status.write().await = DaemonStatus::planning();
 
@@ -32,7 +27,7 @@ pub(crate) async fn handle_generate_plan(
         alpha,
         state.config.max_tolerance,
         state.config.min_free_headroom,
-        &excluded,
+        &[],
     );
 
     *state.status.write().await = DaemonStatus::idle();
@@ -82,40 +77,3 @@ pub(crate) async fn handle_generate_plan(
     }
 }
 
-pub(crate) async fn get_plan(
-    State(state): State<Arc<AppState>>,
-    Path(plan_id): Path<i64>,
-) -> impl IntoResponse {
-    let plan = match state.db.get_plan(plan_id) {
-        Ok(Some(p)) => p,
-        Ok(None) => {
-            return Json(ApiResponse::<PlanSummary>::err("Plan not found"));
-        }
-        Err(e) => {
-            return Json(ApiResponse::<PlanSummary>::err(format!("{e}")));
-        }
-    };
-
-    let moves = match state.db.get_plan_moves(plan_id) {
-        Ok(m) => m,
-        Err(e) => {
-            return Json(ApiResponse::<PlanSummary>::err(format!(
-                "Failed to fetch plan moves: {e}"
-            )));
-        }
-    };
-
-    Json(ApiResponse::ok(PlanSummary {
-        id: plan.id,
-        created_at: plan.created_at,
-        tolerance: plan.tolerance,
-        slider_alpha: plan.slider_alpha,
-        target_utilization: plan.target_utilization,
-        initial_imbalance: plan.initial_imbalance,
-        projected_imbalance: plan.projected_imbalance,
-        total_moves: plan.total_moves,
-        total_bytes_to_move: plan.total_bytes_to_move,
-        status: plan.status,
-        moves,
-    }))
-}

@@ -94,9 +94,6 @@ impl Database {
 
         if current_version < 2 {
             info!("Applying migration 002_add_source_mtime...");
-            // Idempotent: if the column already exists (e.g. partial crash left schema
-            // modified but version un-bumped), the ALTER TABLE will fail with "duplicate
-            // column name". We catch that specific error and proceed to bump the version.
             let col_exists = conn
                 .query_row(
                     "SELECT COUNT(*) > 0 FROM pragma_table_info('planned_moves') WHERE name = 'source_mtime'",
@@ -111,6 +108,13 @@ impl Database {
             tx.execute_batch("INSERT OR IGNORE INTO schema_version (version) VALUES (2);")?;
             tx.commit()?;
             info!("Migration 002_add_source_mtime applied successfully");
+        }
+
+        if current_version < 3 {
+            info!("Applying migration 003_lean_schema...");
+            let migration = include_str!("../../migrations/003_lean_schema.sql");
+            conn.execute_batch(migration)?;
+            info!("Migration 003_lean_schema applied successfully");
         }
 
         Ok(())
@@ -157,16 +161,12 @@ impl Database {
             );
         }
 
-        Ok(RecoveryStats { plans_failed, moves_reset, recovered_move_ids })
+        Ok(RecoveryStats { recovered_move_ids })
     }
 }
 
 /// Stats returned by startup recovery.
 pub(crate) struct RecoveryStats {
-    #[allow(dead_code)]
-    pub plans_failed: usize,
-    #[allow(dead_code)]
-    pub moves_reset: usize,
     /// IDs of moves that were `in_progress` at crash time — need filesystem cleanup.
     pub recovered_move_ids: Vec<i64>,
 }

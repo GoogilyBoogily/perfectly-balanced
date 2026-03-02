@@ -25,7 +25,6 @@ pub(crate) fn router(state: Arc<AppState>) -> Router {
         .route("/api/scan", post(handlers::start_scan))
         // Planning
         .route("/api/plan", post(handlers::handle_generate_plan))
-        .route("/api/plan/{plan_id}", get(handlers::get_plan))
         // Execution
         .route("/api/plan/{plan_id}/execute", post(handlers::execute_plan))
         .route("/api/plan/{plan_id}/cancel", post(handlers::cancel_operation))

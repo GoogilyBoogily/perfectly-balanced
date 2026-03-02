@@ -44,7 +44,7 @@ pub(crate) async fn start_scan(
             };
 
             info!("Discovered {} disks", discovered.len());
-            scan_discovered_disks(&state_clone, &discovered, &req, threads, &rt, &token);
+            scan_discovered_disks(&state_clone, &discovered, threads, &rt, &token);
         }));
 
         if result.is_err() {
@@ -80,11 +80,9 @@ fn parse_mount_table() -> HashMap<String, String> {
     table
 }
 
-#[allow(clippy::too_many_arguments)]
 fn scan_discovered_disks(
     state: &Arc<AppState>,
     discovered: &[scanner::DiscoveredDisk],
-    req: &ScanRequest,
     threads: usize,
     rt: &tokio::runtime::Handle,
     cancel: &CancellationToken,
@@ -125,12 +123,6 @@ fn scan_discovered_disks(
                 continue;
             }
         };
-
-        if let Some(ref ids) = req.disk_ids {
-            if !ids.contains(&disk_id) {
-                continue;
-            }
-        }
 
         if state.config.excluded_disks.contains(&disk.name) {
             info!("Skipping excluded disk: {}", disk.name);

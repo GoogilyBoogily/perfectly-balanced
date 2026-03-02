@@ -24,14 +24,12 @@ impl<T: Serialize> ApiResponse<T> {
 #[derive(Debug, Deserialize)]
 pub(crate) struct ScanRequest {
     pub threads: Option<usize>,
-    pub disk_ids: Option<Vec<i64>>,
 }
 
 /// Request body for POST /api/plan.
 #[derive(Debug, Deserialize)]
 pub(crate) struct PlanRequest {
     pub alpha: Option<f64>,
-    pub excluded_disks: Option<Vec<i64>>,
 }
 
 /// Request body for POST /api/settings.

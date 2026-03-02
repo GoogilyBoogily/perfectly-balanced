@@ -539,27 +539,7 @@ async fn cleanup_target(target: &str) {
             tracing::info!("Cleaned up partial target: {target}");
         }
     }
-    cleanup_empty_parents(target).await;
-}
-
-/// Walk up from a file path removing empty directories, stopping at mount point depth.
-/// Mount points on Unraid are at depth 3 (e.g., /mnt/disk1/) so we never remove those.
-async fn cleanup_empty_parents(path: &str) {
-    let mut current = std::path::PathBuf::from(path);
-    loop {
-        if !current.pop() {
-            break;
-        }
-        // Stop at mount point depth (e.g., /mnt/disk1 = 3 components)
-        if current.components().count() <= 3 {
-            break;
-        }
-        // Try to remove — will fail (harmlessly) if not empty
-        if tokio::fs::remove_dir(&current).await.is_err() {
-            break;
-        }
-        tracing::info!("Removed empty directory: {}", current.display());
-    }
+    crate::executor::recovery::cleanup_empty_parents(target).await;
 }
 
 pub(crate) async fn cancel_operation(

@@ -97,6 +97,19 @@ fn process_dir_entry(
         }
     }
 
+    let metadata = match entry.metadata() {
+        Ok(m) => m,
+        Err(err) => {
+            warn!("Cannot read metadata for {}: {}", entry_path.display(), err);
+            return None;
+        }
+    };
+
+    // Skip directories — only files are useful downstream
+    if metadata.is_dir() {
+        return None;
+    }
+
     let path_str = entry_path.to_string_lossy();
     if let Err(e) = validate_path(&path_str) {
         error!("{}", e);
@@ -104,27 +117,6 @@ fn process_dir_entry(
     }
 
     let relative_path = entry_path.strip_prefix(mount_path).ok()?.to_string_lossy().to_string();
-    let file_name = entry.file_name().to_string_lossy().to_string();
-
-    let metadata = match entry.metadata() {
-        Ok(m) => m,
-        Err(err) => {
-            warn!("Cannot read metadata for {}: {}", path_str, err);
-            return None;
-        }
-    };
-
-    let is_directory = metadata.is_dir();
-    let size_bytes = if is_directory { 0 } else { metadata.len() };
-
-    let parent_path = Path::new(&relative_path).parent().map(|p| {
-        let s = p.to_string_lossy().to_string();
-        if s.is_empty() {
-            ".".to_string()
-        } else {
-            s
-        }
-    });
 
     let mtime = metadata
         .modified()
@@ -135,10 +127,7 @@ fn process_dir_entry(
     Some(FileInsert {
         disk_id,
         file_path: relative_path,
-        file_name,
-        size_bytes,
-        is_directory,
-        parent_path,
+        size_bytes: metadata.len(),
         mtime,
     })
 }
@@ -180,11 +169,8 @@ fn run_walk(ctx: &ScanContext<'_>, disk_name: &str) -> Result<WalkResult> {
             continue;
         };
 
-        if !insert.is_directory {
-            files_scanned += 1;
-            bytes_cataloged += insert.size_bytes;
-        }
-
+        files_scanned += 1;
+        bytes_cataloged += insert.size_bytes;
         all_files.push(insert);
 
         if last_progress.elapsed().as_millis() >= u128::from(PROGRESS_INTERVAL_MS) {

@@ -31,10 +31,7 @@ pub struct FileEntry {
     pub id: i64,
     pub disk_id: i64,
     pub file_path: String,
-    pub file_name: String,
     pub size_bytes: u64,
-    pub is_directory: bool,
-    pub parent_path: Option<String>,
     pub mtime: Option<i64>,
 }
 
@@ -144,7 +141,6 @@ pub struct BalancePlan {
 pub struct PlannedMove {
     pub id: i64,
     pub plan_id: i64,
-    pub file_id: i64,
     pub source_disk_id: i64,
     pub target_disk_id: i64,
     pub file_path: String,
@@ -181,9 +177,6 @@ pub struct MovePathInfo {
 pub struct FileInsert {
     pub disk_id: i64,
     pub file_path: String,
-    pub file_name: String,
     pub size_bytes: u64,
-    pub is_directory: bool,
-    pub parent_path: Option<String>,
     pub mtime: Option<i64>,
 }

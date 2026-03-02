@@ -207,7 +207,6 @@ fn assign_moves(
             planned_moves.push(PlannedMove {
                 id: 0,
                 plan_id: ctx.plan_id,
-                file_id: file.id,
                 source_disk_id: file.disk_id,
                 target_disk_id,
                 file_path: file.file_path.clone(),

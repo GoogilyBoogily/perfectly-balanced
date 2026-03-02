@@ -5,32 +5,31 @@ use rusqlite::params;
 
 /// Map a row from the planned_moves JOIN query into a `PlannedMoveDetail`.
 fn map_move_detail_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<PlannedMoveDetail> {
-    let status_str: String = row.get(9)?;
+    let status_str: String = row.get(8)?;
     let status = MoveStatus::try_from(status_str.as_str()).map_err(|e| {
-        rusqlite::Error::FromSqlConversionFailure(9, rusqlite::types::Type::Text, Box::from(e))
+        rusqlite::Error::FromSqlConversionFailure(8, rusqlite::types::Type::Text, Box::from(e))
     })?;
     Ok(PlannedMoveDetail {
         move_info: PlannedMove {
             id: row.get(0)?,
             plan_id: row.get(1)?,
-            file_id: row.get(2)?,
-            source_disk_id: row.get(3)?,
-            target_disk_id: row.get(4)?,
-            file_path: row.get(5)?,
-            file_size: row.get::<_, i64>(6)? as u64,
-            move_order: row.get(7)?,
-            phase: row.get(8)?,
+            source_disk_id: row.get(2)?,
+            target_disk_id: row.get(3)?,
+            file_path: row.get(4)?,
+            file_size: row.get::<_, i64>(5)? as u64,
+            move_order: row.get(6)?,
+            phase: row.get(7)?,
             status,
-            error_message: row.get(10)?,
-            source_mtime: row.get(13)?,
+            error_message: row.get(9)?,
+            source_mtime: row.get(12)?,
         },
-        source_disk_name: row.get(11)?,
-        target_disk_name: row.get(12)?,
+        source_disk_name: row.get(10)?,
+        target_disk_name: row.get(11)?,
     })
 }
 
 const MOVE_DETAIL_SELECT: &str = "\
-    SELECT m.id, m.plan_id, m.file_id, m.source_disk_id, m.target_disk_id,
+    SELECT m.id, m.plan_id, m.source_disk_id, m.target_disk_id,
            m.file_path, m.file_size, m.exec_order, m.phase, m.status, m.error_message,
            s.disk_name AS source_disk_name, t.disk_name AS target_disk_name,
            m.source_mtime
@@ -47,15 +46,14 @@ impl Database {
         {
             let mut stmt = tx.prepare_cached(
                 "INSERT INTO planned_moves \
-                 (plan_id, file_id, source_disk_id, target_disk_id, file_path, \
+                 (plan_id, source_disk_id, target_disk_id, file_path, \
                  file_size, exec_order, phase, source_mtime)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             )?;
 
             for m in moves {
                 stmt.execute(params![
                     m.plan_id,
-                    m.file_id,
                     m.source_disk_id,
                     m.target_disk_id,
                     m.file_path,

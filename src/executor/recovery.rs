@@ -3,14 +3,6 @@ use anyhow::Result;
 use std::path::Path;
 use tracing::{info, warn};
 
-/// Stats returned by partial file cleanup.
-#[allow(dead_code)]
-pub(crate) struct CleanupStats {
-    pub completed: usize,
-    pub cleaned: usize,
-    pub data_loss: usize,
-}
-
 /// Examine the filesystem state for each recovered move and take corrective action.
 ///
 /// Under two-phase move semantics, rsync never deletes the source — only our
@@ -25,9 +17,9 @@ pub(crate) struct CleanupStats {
 pub(crate) async fn cleanup_partial_files(
     db: &Database,
     recovered_move_ids: &[i64],
-) -> Result<CleanupStats> {
+) -> Result<()> {
     if recovered_move_ids.is_empty() {
-        return Ok(CleanupStats { completed: 0, cleaned: 0, data_loss: 0 });
+        return Ok(());
     }
 
     let move_infos = db.get_moves_path_info(recovered_move_ids)?;
@@ -162,11 +154,11 @@ pub(crate) async fn cleanup_partial_files(
         );
     }
 
-    Ok(CleanupStats { completed, cleaned, data_loss })
+    Ok(())
 }
 
 /// Walk up from a file path removing empty directories, stopping at mount point depth.
-async fn cleanup_empty_parents(path: &str) {
+pub(crate) async fn cleanup_empty_parents(path: &str) {
     let mut current = std::path::PathBuf::from(path);
     loop {
         if !current.pop() {

@@ -376,12 +376,6 @@ function formatBytes(bytes) {
 
 function pct(val) { return (val * 100).toFixed(1) + '%'; }
 
-function escapeHtml(str) {
-    const el = document.createElement('span');
-    el.textContent = str;
-    return el.innerHTML;
-}
-
 function barColor(util, target) {
     const delta = Math.abs(util - target);
     if (delta < 0.05) return 'green';
